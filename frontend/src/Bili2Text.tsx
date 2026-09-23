@@ -7,7 +7,7 @@ interface QrSession {
 }
 
 /** 扫码登录弹窗：申请二维码 → 轮询状态 → 成功回调；失效自动换新码。 */
-function LoginModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+export function LoginModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
   const [session, setSession] = useState<QrSession | null>(null)
   const [tip, setTip] = useState('正在生成二维码…')
   const [done, setDone] = useState(false)
@@ -51,7 +51,6 @@ function LoginModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
     return () => clearInterval(timer)
   }, [session, done, newSession, onSuccess])
 
-  // Esc 关闭
   const escRef = useRef(onClose)
   escRef.current = onClose
   useEffect(() => {
@@ -69,7 +68,8 @@ function LoginModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: ()
         aria-label="扫码登录哔哩哔哩"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3>扫码登录</h3>
+        <h3>登录哔哩哔哩</h3>
+        <p className="modal-sub">登录后可提取 AI 字幕；登录态只保存在本机</p>
         <div className="qr-box">
           {session ? (
             <QRCodeSVG value={session.qr_content} size={176} />
@@ -96,13 +96,13 @@ interface ExtractResult {
   srt: string
 }
 
-export default function Bili2Text({ onBack }: { onBack: () => void }) {
+export default function Bili2Text() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ExtractResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  const [loggedIn, setLoggedIn] = useState<boolean | null>(null) // null = 查询中
+  const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [showLogin, setShowLogin] = useState(false)
 
   const refreshStatus = useCallback(async () => {
@@ -133,7 +133,7 @@ export default function Bili2Text({ onBack }: { onBack: () => void }) {
       })
       const d = await r.json()
       if (!r.ok || d.error) {
-        if (d.error === 'login_required') setError('需要登录 B 站（右上角扫码）')
+        if (d.error === 'login_required') setError('需要登录 B 站，点击右上角「扫码登录」')
         else if (d.error === 'no_subtitle') setError(d.message ?? '该视频没有可用字幕')
         else if (d.error === 'bad_input') setError('没能从输入里解析出 BV 号，检查下链接？')
         else setError(d.message ?? '提取失败，稍后再试')
@@ -172,32 +172,34 @@ export default function Bili2Text({ onBack }: { onBack: () => void }) {
   const fmtDur = (s: number) => `${Math.floor(s / 60)}分${s % 60}秒`
 
   return (
-    <div className="page">
-      <header className="sub-head">
-        <button className="btn plain" onClick={onBack}>
-          ← 工具箱
-        </button>
-        <span className="sub-title">B站视频转文字</span>
-        <span className="spacer" />
+    <div className="content-page">
+      <div className="page-heading">
+        <div>
+          <h1>B站视频转文字</h1>
+          <p className="page-sub">贴入视频链接，提取官方或 AI 字幕，导出纯文本或 SRT。</p>
+        </div>
         {loggedIn === null ? null : loggedIn ? (
           <button className="btn ghost" onClick={logout} title="点击退出登录">
-            已登录 · 退出
+            <span className="dot-inline ok" /> 已登录 · 退出
           </button>
         ) : (
           <button className="btn accent" onClick={() => setShowLogin(true)}>
             扫码登录 B站
           </button>
         )}
-      </header>
+      </div>
 
       <section className="panel workbench">
+        <label className="field-label" htmlFor="bili-input">
+          视频地址
+        </label>
         <div className="input-row">
           <input
+            id="bili-input"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && extract()}
-            placeholder="粘贴视频链接、BV 号或 b23.tv 短链"
-            aria-label="视频链接"
+            placeholder="https://www.bilibili.com/video/BV… 或 BV 号或 b23.tv 短链"
             autoFocus
           />
           <button className="btn accent" onClick={extract} disabled={busy || !input.trim()}>
@@ -205,7 +207,7 @@ export default function Bili2Text({ onBack }: { onBack: () => void }) {
           </button>
         </div>
         <p className="hint">
-          优先提取视频自带字幕（官方 / AI，自动选中文）；AI 字幕需要登录。无字幕的视频暂时转不了，转写功能在路上。
+          优先官方字幕，其次 AI 字幕（需登录），自动选中文；导出可选纯文本或带时间轴的 SRT。
         </p>
       </section>
 
