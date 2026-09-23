@@ -1,11 +1,11 @@
-"""端点：B 站扫码登录（工具内部功能，挂 /api/tools/bili2text/auth/*）。
+"""端点：平台账号服务（B 站登录态为平台资产，/api/platform/bili/*）。
 
 依赖真实 B 站接口（无需登录态的部分）。
 """
 
 import re
 
-AUTH = "/api/tools/bili2text/auth"
+AUTH = "/api/platform/bili"
 
 
 def test_qrcode_generate(client):

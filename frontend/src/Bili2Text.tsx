@@ -15,7 +15,7 @@ export function LoginModal({ onClose, onSuccess }: { onClose: () => void; onSucc
   const newSession = useCallback(async () => {
     setSession(null)
     setTip('正在生成二维码…')
-    const r = await fetch('/api/tools/bili2text/auth/qrcode', { method: 'POST' })
+    const r = await fetch('/api/platform/bili/qrcode', { method: 'POST' })
     const d = await r.json()
     setSession({ qrcode_key: d.qrcode_key, qr_content: d.qr_content })
     setTip('打开哔哩哔哩 App 扫一扫')
@@ -30,7 +30,7 @@ export function LoginModal({ onClose, onSuccess }: { onClose: () => void; onSucc
     const timer = setInterval(async () => {
       try {
         const r = await fetch(
-          `/api/tools/bili2text/auth/qrcode/poll?qrcode_key=${session.qrcode_key}`,
+          `/api/platform/bili/qrcode/poll?qrcode_key=${session.qrcode_key}`,
         )
         const d = await r.json()
         if (d.status === 'success') {
@@ -107,7 +107,7 @@ export default function Bili2Text() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      const r = await fetch('/api/tools/bili2text/auth/status')
+      const r = await fetch('/api/platform/bili/status')
       const d = await r.json()
       setLoggedIn(Boolean(d.logged_in))
     } catch {
@@ -148,7 +148,7 @@ export default function Bili2Text() {
   }
 
   const logout = async () => {
-    await fetch('/api/tools/bili2text/auth', { method: 'DELETE' })
+    await fetch('/api/platform/bili', { method: 'DELETE' })
     setLoggedIn(false)
   }
 
