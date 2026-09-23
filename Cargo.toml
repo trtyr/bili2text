@@ -4,7 +4,7 @@ members = [
     "crates/server",
     "crates/platform-core",
     "crates/bili-client",
-    "crates/tool-bili2text",
+    "crates/tool-bili2text", "crates/asr", "crates/downloader",
 ]
 
 [workspace.package]
@@ -17,3 +17,4 @@ bili-client = { path = "crates/bili-client" }
 
 [profile.release]
 lto = "thin"
+

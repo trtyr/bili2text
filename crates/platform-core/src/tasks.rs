@@ -21,8 +21,12 @@ pub struct TaskRecord {
     /// 输出摘要（视频标题等）。
     pub title: Option<String>,
     pub bvid: Option<String>,
-    /// succeeded / failed（长任务扩展 pending / running）。
+    /// pending / running / succeeded / failed。
     pub status: String,
+    /// 运行阶段（长任务），如 downloading / transcoding / transcribing。
+    pub stage: Option<String>,
+    /// 进度 0-100。
+    pub progress: Option<i64>,
     pub error: Option<String>,
     pub lang: Option<String>,
     pub lines_count: Option<i64>,
@@ -47,6 +51,8 @@ pub struct TaskListItem {
     pub title: Option<String>,
     pub bvid: Option<String>,
     pub status: String,
+    pub stage: Option<String>,
+    pub progress: Option<i64>,
     pub error: Option<String>,
     pub lang: Option<String>,
     pub lines_count: Option<i64>,
@@ -80,6 +86,12 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_tool_created ON tasks(tool_id, created_at DESC);
 ";
 
+/// 旧库迁移：补 progress / stage 列（已存在则忽略错误）。
+fn migrate(conn: &Connection) {
+    let _ = conn.execute("ALTER TABLE tasks ADD COLUMN progress INTEGER", []);
+    let _ = conn.execute("ALTER TABLE tasks ADD COLUMN stage TEXT", []);
+}
+
 fn row_to_record(row: &rusqlite::Row<'_>, with_result: bool) -> rusqlite::Result<TaskRecord> {
     Ok(TaskRecord {
         id: row.get("id")?,
@@ -89,6 +101,8 @@ fn row_to_record(row: &rusqlite::Row<'_>, with_result: bool) -> rusqlite::Result
         title: row.get("title")?,
         bvid: row.get("bvid")?,
         status: row.get("status")?,
+        stage: row.get("stage").ok().flatten(),
+        progress: row.get("progress").ok().flatten(),
         error: row.get("error")?,
         lang: row.get("lang")?,
         lines_count: row.get("lines_count")?,
@@ -101,17 +115,18 @@ fn row_to_record(row: &rusqlite::Row<'_>, with_result: bool) -> rusqlite::Result
 }
 
 impl TaskStore {
-    /// 打开（或创建）存储；自动建表。目录不存在会自动创建。
+    /// 打开（或创建）存储；自动建表并迁移。目录不存在会自动创建。
     pub fn open(path: impl AsRef<std::path::Path>) -> rusqlite::Result<Self> {
         if let Some(dir) = path.as_ref().parent() {
             std::fs::create_dir_all(dir).ok();
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn);
         Ok(Self { conn: std::sync::Mutex::new(conn) })
     }
 
-    /// 写入一条已完成的任务记录（当前同步模型：record 即终态）。
+    /// 写入一条任务记录。status=running/pending 时不设 finished_at（长任务入口）。
     pub fn record(&self, mut task: TaskRecord) -> rusqlite::Result<String> {
         if task.id.is_empty() {
             task.id = uuid::Uuid::new_v4().to_string();
@@ -119,14 +134,16 @@ impl TaskStore {
         if task.created_at == 0 {
             task.created_at = now_secs();
         }
-        if task.finished_at.is_none() {
+        let is_terminal = matches!(task.status.as_str(), "succeeded" | "failed");
+        if task.finished_at.is_none() && is_terminal {
             task.finished_at = Some(now_secs());
         }
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO tasks (id, tool_id, kind, input, title, bvid, status, error, lang, \
-             lines_count, duration_secs, result_text, result_srt, created_at, finished_at) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+             lines_count, duration_secs, result_text, result_srt, created_at, finished_at, \
+             stage, progress) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             rusqlite::params![
                 task.id,
                 task.tool_id,
@@ -143,16 +160,66 @@ impl TaskStore {
                 task.result_srt,
                 task.created_at,
                 task.finished_at,
+                task.stage,
+                task.progress,
             ],
         )?;
         Ok(task.id)
+    }
+
+    /// 更新运行中任务的阶段与进度（长任务心跳）。
+    pub fn update_progress(
+        &self,
+        id: &str,
+        stage: &str,
+        progress: i64,
+    ) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET stage = ?2, progress = ?3, status = 'running' WHERE id = ?1",
+            rusqlite::params![id, stage, progress],
+        )?;
+        Ok(())
+    }
+
+    /// 完成长任务：写入终态与结果。
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish(
+        &self,
+        id: &str,
+        status: &str,
+        error: Option<&str>,
+        lang: Option<&str>,
+        lines_count: Option<i64>,
+        duration_secs: Option<i64>,
+        result_text: Option<&str>,
+        result_srt: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET status = ?2, error = ?3, lang = ?4, lines_count = ?5, \
+             duration_secs = ?6, result_text = ?7, result_srt = ?8, progress = 100, \
+             finished_at = ?9 WHERE id = ?1",
+            rusqlite::params![
+                id,
+                status,
+                error,
+                lang,
+                lines_count,
+                duration_secs,
+                result_text,
+                result_srt,
+                now_secs(),
+            ],
+        )?;
+        Ok(())
     }
 
     /// 任务列表（按时间倒序；可按工具过滤；不含结果全文）。
     pub fn list(&self, tool_id: Option<&str>, limit: u32) -> rusqlite::Result<Vec<TaskListItem>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tool_id, kind, input, title, bvid, status, error, lang, \
+            "SELECT id, tool_id, kind, input, title, bvid, status, stage, progress, error, lang, \
              lines_count, duration_secs, created_at \
              FROM tasks WHERE (?1 IS NULL OR tool_id = ?1) \
              ORDER BY created_at DESC LIMIT ?2",
@@ -166,6 +233,8 @@ impl TaskStore {
                 title: row.get("title")?,
                 bvid: row.get("bvid")?,
                 status: row.get("status")?,
+                stage: row.get("stage").ok().flatten(),
+                progress: row.get("progress").ok().flatten(),
                 error: row.get("error")?,
                 lang: row.get("lang")?,
                 lines_count: row.get("lines_count")?,
@@ -220,6 +289,8 @@ mod tests {
             title: Some("测试视频".into()),
             bvid: Some("BV1J7hE6aEDQ".into()),
             status: "succeeded".into(),
+            stage: None,
+            progress: Some(100),
             error: None,
             lang: Some("ai-zh".into()),
             lines_count: Some(353),

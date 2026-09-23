@@ -421,6 +421,32 @@ body {
   display: flex;
   gap: 10px;
 }
+.btn-group {
+  display: flex;
+  gap: 8px;
+}
+.task-progress {
+  margin-top: 14px;
+}
+.progress-bar {
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--line-1);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2563eb, #6ea8ff);
+  border-radius: 999px;
+  transition: width 0.6s var(--ease-out);
+}
+.progress-text {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
 .input-row input {
   flex: 1;
   min-width: 0;

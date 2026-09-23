@@ -21,16 +21,19 @@ use axum::{
     routing::{delete, get, post},
 };
 use bili_client::BiliClient;
+use downloader::AudioDownloader;
 use platform_core::tasks::TaskStore;
 use platform_core::{Tool, ToolInfo};
 use serde_json::{Value, json};
-use tool_bili2text::Bili2TextTool;
+use tool_bili2text::{AsrSlot, Bili2TextTool};
 
 /// 平台运行时持有的能力集合。
 #[derive(Clone)]
 pub struct PlatformState {
     pub client: Arc<BiliClient>,
     pub tasks: Arc<TaskStore>,
+    pub downloader: Arc<AudioDownloader>,
+    pub asr: Arc<AsrSlot>,
 }
 
 /// 已注册的工具集合。未来新增工具：实现 `Tool` 后在这里加一行。
@@ -38,6 +41,8 @@ pub fn registry(state: &PlatformState) -> Vec<Arc<dyn Tool>> {
     vec![Arc::new(Bili2TextTool::new(
         state.client.clone(),
         state.tasks.clone(),
+        state.downloader.clone(),
+        state.asr.clone(),
     ))]
 }
 
@@ -194,7 +199,12 @@ fn platform_err(e: bili_client::BiliError) -> (StatusCode, Json<Value>) {
 
 /// 组装完整应用路由。
 pub fn app(client: Arc<BiliClient>, tasks: Arc<TaskStore>) -> Router {
-    let state = PlatformState { client, tasks };
+    let state = PlatformState {
+        client,
+        tasks,
+        downloader: Arc::new(AudioDownloader::new("data/audio")),
+        asr: Arc::new(AsrSlot::default()),
+    };
 
     let mut api = Router::new()
         .route("/health", get(health))

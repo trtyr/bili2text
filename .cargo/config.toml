@@ -1,0 +1,4 @@
+# macOS：sherpa-onnx 的动态库（libonnxruntime 等）与二进制同目录（target/<profile>/），
+# 运行时按 @executable_path 解析 @rpath
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-rpath,@executable_path"]

@@ -18,16 +18,39 @@ use axum::{
     routing::{get, post},
 };
 use bili_client::{BiliClient, BiliError};
+use downloader::AudioDownloader;
 use platform_core::Tool;
 use platform_core::tasks::{TaskRecord, TaskStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+/// ASR 引擎共享槽：懒加载 + 串行推理（CPU 密集，无并行收益）。
+#[derive(Default)]
+pub struct AsrSlot {
+    engine: std::sync::Mutex<Option<asr::AsrEngine>>,
+}
+
+impl AsrSlot {
+    /// 借出引擎（首次调用时加载模型）。
+    fn with_engine<T>(
+        &self,
+        f: impl FnOnce(&mut asr::AsrEngine) -> Result<T, asr::AsrError>,
+    ) -> Result<T, asr::AsrError> {
+        let mut guard = self.engine.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(asr::AsrEngine::open_default()?);
+        }
+        f(guard.as_mut().unwrap())
+    }
+}
 
 /// 工具运行时状态：平台能力引用集合。
 #[derive(Clone)]
 pub struct ToolState {
     pub client: Arc<BiliClient>,
     pub tasks: Arc<TaskStore>,
+    pub downloader: Arc<AudioDownloader>,
+    pub asr: Arc<AsrSlot>,
 }
 
 /// 工具实例。
@@ -36,9 +59,19 @@ pub struct Bili2TextTool {
 }
 
 impl Bili2TextTool {
-    pub fn new(client: Arc<BiliClient>, tasks: Arc<TaskStore>) -> Self {
+    pub fn new(
+        client: Arc<BiliClient>,
+        tasks: Arc<TaskStore>,
+        downloader: Arc<AudioDownloader>,
+        asr: Arc<AsrSlot>,
+    ) -> Self {
         Self {
-            state: ToolState { client, tasks },
+            state: ToolState {
+                client,
+                tasks,
+                downloader,
+                asr,
+            },
         }
     }
 }
@@ -149,6 +182,8 @@ async fn extract(
                 title: value["title"].as_str().map(String::from),
                 bvid: value["bvid"].as_str().map(String::from),
                 status: "succeeded".into(),
+                stage: None,
+                progress: Some(100),
                 error: None,
                 lang: value["subtitle"]["lan"].as_str().map(String::from),
                 lines_count: value["lines_count"].as_i64(),
@@ -176,6 +211,8 @@ async fn extract(
                 title: body["title"].as_str().map(String::from),
                 bvid: body["bvid"].as_str().map(String::from),
                 status: "failed".into(),
+                stage: None,
+                progress: None,
                 error: body["error"].as_str().map(String::from),
                 lang: req.lang.clone(),
                 lines_count: None,
@@ -246,6 +283,136 @@ async fn run_extract(client: &BiliClient, req: &VideoReq) -> Result<Value, ApiEr
     }))
 }
 
+/// `POST /api/tools/bili2text/transcribe` — 本地 ASR 转写（长任务）。
+///
+/// 立即返回 `task_id`；后台执行 下载音频 → ffmpeg 转码 → SenseVoice 推理，
+/// 进度写入平台任务存储，前端轮询 `GET /api/platform/tasks/{id}` 获取状态。
+async fn transcribe(
+    State(state): State<ToolState>,
+    Json(req): Json<VideoReq>,
+) -> Result<Json<Value>, ApiError> {
+    // 前置校验（快速失败）：解析 BV + 拿标题
+    let client = &state.client;
+    let bvid = client.resolve_bvid(&req.input).await.map_err(err_resp)?;
+    let info = client.video_view(&bvid).await.map_err(err_resp)?;
+
+    let task_id = state
+        .tasks
+        .record(TaskRecord {
+            id: String::new(),
+            tool_id: "bili2text".into(),
+            kind: "asr_transcribe".into(),
+            input: req.input.clone(),
+            title: Some(info.title.clone()),
+            bvid: Some(bvid.clone()),
+            status: "running".into(),
+            stage: Some("queued".into()),
+            progress: Some(0),
+            error: None,
+            lang: None,
+            lines_count: None,
+            duration_secs: Some(info.duration_secs as i64),
+            result_text: None,
+            result_srt: None,
+            created_at: 0,
+            finished_at: None,
+        })
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "storage_error", "message": e.to_string() })),
+            )
+        })?;
+
+    // 后台执行（能力编排：下载 → 转码 → 推理）
+    let bg_state = state.clone();
+    let bg_bvid = bvid.clone();
+    let bg_task_id = task_id.clone();
+    tokio::spawn(async move {
+        let result = run_transcribe(&bg_state, &bg_bvid, &bg_task_id).await;
+        match result {
+            Ok((lang, text, srt, seg_count)) => {
+                let _ = bg_state.tasks.finish(
+                    &bg_task_id,
+                    "succeeded",
+                    None,
+                    Some(&lang),
+                    Some(seg_count as i64),
+                    None,
+                    Some(&text),
+                    Some(&srt),
+                );
+            }
+            Err(e) => {
+                let _ = bg_state.tasks.finish(&bg_task_id, "failed", Some(&e), None, None, None, None, None);
+            }
+        }
+    });
+
+    Ok(Json(json!({
+        "task_id": task_id,
+        "status": "running",
+        "bvid": bvid,
+        "title": info.title,
+        "duration_secs": info.duration_secs,
+        "poll": format!("/api/platform/tasks/{task_id}"),
+    })))
+}
+
+/// 后台转写流水线：下载 → 转码 → 推理，各阶段心跳写入任务存储。
+async fn run_transcribe(
+    state: &ToolState,
+    bvid: &str,
+    task_id: &str,
+) -> Result<(String, String, String, usize), String> {
+    // 阶段 1：下载音频（携带平台登录态 cookie 解锁高音质）
+    state
+        .tasks
+        .update_progress(task_id, "downloading", 10)
+        .map_err(|e| e.to_string())?;
+    let cookie_file = state
+        .client
+        .credential()
+        .to_netscape_file(std::path::Path::new("data/bili-cookies.txt"))
+        .map_err(|e| e.to_string())?;
+    let page_url = format!("https://www.bilibili.com/video/{bvid}");
+    let wav = state
+        .downloader
+        .fetch_wav(&page_url, cookie_file.as_deref().map(std::path::Path::new), bvid)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 阶段 2：推理（CPU 密集，放阻塞线程池）
+    state
+        .tasks
+        .update_progress(task_id, "transcribing", 50)
+        .map_err(|e| e.to_string())?;
+    let engine_slot = state.asr.clone();
+    let wav_path = wav.clone();
+    let transcription = tokio::task::spawn_blocking(move || {
+        engine_slot.with_engine(|engine| engine.transcribe_wav(&wav_path))
+    })
+    .await
+    .map_err(|e| format!("任务中断：{e}"))?
+    .map_err(|e| e.to_string())?;
+
+    // 清理音频文件（结果已入库）
+    tokio::fs::remove_file(&wav).await.ok();
+
+    // lang 形如 "<|zh|>"，剥掉标记
+    let lang: String = transcription
+        .lang
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .to_string();
+
+    Ok((
+        lang,
+        transcription.text,
+        transcription.srt,
+        transcription.segments.len(),
+    ))
+}
+
 /// 字幕行转 SRT 格式（00:00:00,000 --> ...）。
 fn to_srt(lines: &[bili_client::video::SubtitleLine]) -> String {
     fn stamp(secs: f64) -> String {
@@ -311,6 +478,7 @@ impl Tool for Bili2TextTool {
             .route("/info", get(info))
             .route("/tracks", post(tracks))
             .route("/extract", post(extract))
+            .route("/transcribe", post(transcribe))
             .with_state(self.state.clone())
     }
 }

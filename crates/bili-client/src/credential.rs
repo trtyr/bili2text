@@ -58,6 +58,29 @@ impl Credential {
             Err(_) => Ok(Self::default()),
         }
     }
+
+    /// 导出为 Netscape cookie 文件格式（yt-dlp / curl 可直接使用）。
+    /// domain 固定 .bilibili.com。未登录（无 SESSDATA）返回 None。
+    pub fn to_netscape_file(&self, path: &Path) -> std::io::Result<Option<String>> {
+        let Some(header_value) = self.header_value() else {
+            return Ok(None);
+        };
+        let mut out = String::from("# Netscape HTTP Cookie File\n");
+        for (name, value) in &self.cookies {
+            if value.is_empty() {
+                continue;
+            }
+            out.push_str(&format!(
+                ".bilibili.com\tTRUE\t/\tTRUE\t0\t{name}\t{value}\n"
+            ));
+        }
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(path, out)?;
+        let _ = header_value;
+        Ok(Some(path.display().to_string()))
+    }
 }
 
 #[cfg(test)]

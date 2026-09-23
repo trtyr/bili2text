@@ -65,5 +65,6 @@ cd e2e && python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 - [x] 平台账号服务（扫码登录/登录态落库 `data/credential.json`/状态校验/登出）
 - [x] 字幕提取链路（BV/链接/短链解析 → 字幕列表 + 多语言 + 文本/SRT 导出）
 - [x] 平台任务服务（SQLite `data/tasks.db`：提取历史/回看/删除 + 工具页历史面板）
-- [ ] ASR 链路（yt-dlp 下载 → SenseVoice 转写 → 长任务状态机 + SSE 进度）
+- [x] ASR 链路（crates/downloader：yt-dlp+ffmpeg；crates/asr：SenseVoice；
+      POST /transcribe 长任务 + 阶段进度 + 前端进度条轮询）
 - [ ] 前端体验打磨（语言切换、批量提取、多 P 支持）
