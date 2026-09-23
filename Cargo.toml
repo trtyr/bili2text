@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/server",
+    "crates/platform-core",
+    "crates/bili-client",
+    "crates/tool-bili2text",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+platform-core = { path = "crates/platform-core" }
+bili-client = { path = "crates/bili-client" }
+
+[profile.release]
+lto = "thin"

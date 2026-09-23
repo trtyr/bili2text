@@ -1,0 +1,15 @@
+# Rust
+/target
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Python e2e
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 运行时数据（SQLite、模型、临时下载等）
+data/
