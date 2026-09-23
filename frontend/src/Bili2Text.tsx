@@ -96,6 +96,30 @@ interface ExtractResult {
   srt: string
 }
 
+interface TaskItem {
+  id: string
+  input: string
+  title: string | null
+  bvid: string | null
+  status: string
+  error: string | null
+  lang: string | null
+  lines_count: number | null
+  duration_secs: number | null
+  created_at: number
+}
+
+interface TaskDetail extends TaskItem {
+  result_text: string | null
+  result_srt: string | null
+}
+
+function fmtTime(ts: number) {
+  const d = new Date(ts * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export default function Bili2Text() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -104,6 +128,21 @@ export default function Bili2Text() {
   const [copied, setCopied] = useState(false)
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [showLogin, setShowLogin] = useState(false)
+  const [history, setHistory] = useState<TaskItem[]>([])
+
+  const refreshHistory = useCallback(async () => {
+    try {
+      const r = await fetch('/api/platform/tasks?tool_id=bili2text&limit=50')
+      const d = await r.json()
+      setHistory(d.tasks ?? [])
+    } catch {
+      setHistory([])
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshHistory()
+  }, [refreshHistory])
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -140,11 +179,43 @@ export default function Bili2Text() {
         return
       }
       setResult(d as ExtractResult)
+      refreshHistory()
     } catch {
       setError('网络错误，后端服务可能没在跑')
     } finally {
       setBusy(false)
     }
+  }
+
+  /** 回看一条历史：拉详情，填充结果区。 */
+  const openHistory = async (id: string) => {
+    try {
+      const r = await fetch(`/api/platform/tasks/${id}`)
+      const d = await r.json()
+      const t = d.task as TaskDetail
+      if (!t || t.status !== 'succeeded' || !t.result_text) {
+        setError(t?.error ? `该记录当时未成功：${t.error}` : '这条记录没有可回看的内容')
+        return
+      }
+      setError(null)
+      setResult({
+        bvid: t.bvid ?? '',
+        title: t.title ?? t.input,
+        duration_secs: t.duration_secs ?? 0,
+        subtitle: { lan: t.lang ?? '', lan_doc: t.lang ?? '', is_ai: (t.lang ?? '').startsWith('ai') },
+        lines_count: t.lines_count ?? 0,
+        text: t.result_text,
+        srt: t.result_srt ?? '',
+      })
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch {
+      setError('读取历史记录失败')
+    }
+  }
+
+  const removeHistory = async (id: string) => {
+    await fetch(`/api/platform/tasks/${id}`, { method: 'DELETE' })
+    setHistory((h) => h.filter((t) => t.id !== id))
   }
 
   const logout = async () => {
@@ -248,6 +319,42 @@ export default function Bili2Text() {
           }}
         />
       )}
+
+      <section className="panel history-panel">
+        <div className="history-head">
+          <h2>历史记录</h2>
+          <span className="meta">{history.length} 条 · 存储于本机 data/tasks.db</span>
+        </div>
+        {history.length === 0 ? (
+          <p className="hint">还没有提取记录，上面贴个视频链接试试。</p>
+        ) : (
+          <ul className="history-list">
+            {history.map((t) => (
+              <li key={t.id} className={`history-row ${t.status}`}>
+                <button className="history-open" onClick={() => openHistory(t.id)}>
+                  <span className={`h-status ${t.status}`} title={t.error ?? t.status} />
+                  <span className="h-body">
+                    <span className="h-title">{t.title ?? t.input}</span>
+                    <span className="h-meta">
+                      {fmtTime(t.created_at)}
+                      {t.lines_count ? ` · ${t.lines_count} 条` : ''}
+                      {t.duration_secs ? ` · ${fmtDur(t.duration_secs)}` : ''}
+                      {t.status === 'failed' ? ` · ${t.error ?? '失败'}` : ''}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  className="btn plain h-del"
+                  title="删除这条记录"
+                  onClick={() => removeHistory(t.id)}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

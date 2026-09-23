@@ -52,16 +52,18 @@ cd e2e && python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 | --- | --- |
 | `GET /api/health` | `e2e/endpoints/test_health.py` |
 | `GET /api/tools`、`GET /api/tools/{id}/info` | `e2e/endpoints/test_tools.py` |
-| `POST /api/auth/bili/qrcode`、`GET .../poll`、`GET /status`、`DELETE /` | `e2e/endpoints/test_auth_bili.py` |
+| `POST /api/platform/bili/qrcode`、`GET .../poll`、`GET /status`、`DELETE /` | `e2e/endpoints/test_auth_bili.py` |
 | `POST /api/tools/bili2text/tracks`、`/extract` | `e2e/endpoints/test_extract.py` |
+| `GET /api/platform/tasks`、`GET|DELETE /api/platform/tasks/{id}` | `e2e/endpoints/test_tasks.py` |
 
 新增端点时同步新增对应测试文件（1:1 约定）。依赖登录态的完整链路用例
 标 `@pytest.mark.live`，登录后 `pytest -m live` 手动跑。
 
 ## 路线图
 
-- [x] workspace 骨架 + 工具注册制 + 门户页 + e2e 框架
-- [x] 扫码登录（二维码生成/轮询/登录态落库 `data/credential.json`）
+- [x] workspace 骨架 + 工具注册制 + 应用外壳（侧栏/面包屑）+ e2e 框架
+- [x] 平台账号服务（扫码登录/登录态落库 `data/credential.json`/状态校验/登出）
 - [x] 字幕提取链路（BV/链接/短链解析 → 字幕列表 + 多语言 + 文本/SRT 导出）
-- [ ] ASR 链路（yt-dlp 下载 → SenseVoice 转写 → 任务队列 + SSE 进度）
-- [ ] 前端体验打磨（语言切换、批量提取）
+- [x] 平台任务服务（SQLite `data/tasks.db`：提取历史/回看/删除 + 工具页历史面板）
+- [ ] ASR 链路（yt-dlp 下载 → SenseVoice 转写 → 长任务状态机 + SSE 进度）
+- [ ] 前端体验打磨（语言切换、批量提取、多 P 支持）

@@ -26,10 +26,18 @@ def test_tracks_without_login_returns_empty(client):
     assert isinstance(data["tracks"], list)
 
 
-def test_extract_without_login_reports_no_subtitle(client):
+def test_extract_valid_video_returns_result_or_no_subtitle(client):
+    """合法视频：登录时成功返回全文；未登录时报告 no_subtitle。两者都算链路正确。"""
     r = client.post("/api/tools/bili2text/extract", json={"input": BVID_INPUT})
     assert r.status_code == 200
-    assert r.json()["error"] == "no_subtitle"
+    data = r.json()
+    if data.get("error") == "no_subtitle":
+        assert data["title"]
+    else:
+        assert "error" not in data
+        assert data["text"]
+        assert data["srt"]
+        assert data["lines_count"] > 0
 
 
 @pytest.mark.live

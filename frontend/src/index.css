@@ -496,6 +496,80 @@ body {
   margin-top: 14px;
 }
 
+/* ============ 历史记录 ============ */
+.history-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.history-head h2 {
+  margin: 0;
+  font-size: 15.5px;
+}
+.history-head .meta {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.history-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line-1);
+}
+.history-row:last-child { border-bottom: none; }
+.history-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding: 11px 8px;
+  border: none;
+  background: none;
+  color: var(--ink-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.history-open:hover { background: rgba(110, 168, 255, 0.06); }
+.h-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.h-status.succeeded { background: var(--ok); }
+.h-status.failed { background: var(--bad); }
+.h-status.pending, .h-status.running { background: var(--warn); }
+.h-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.h-title {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.h-meta {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.h-del {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 /* ============ 按钮 ============ */
 .btn {
   display: inline-flex;

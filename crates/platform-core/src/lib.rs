@@ -1,7 +1,12 @@
-//! 平台核心：工具注册 trait 与通用任务模型。
+//! 平台核心：工具注册 trait、通用任务模型与平台任务存储。
 //!
 //! 每个小工具实现 [`Tool`] trait，由 `server` 统一挂载路由并暴露工具目录。
 //! 后续新增工具 = 实现该 trait + 在 server 注册表加一行。
+//!
+//! 模块：
+//! - [`tasks`]：平台任务存储（工具执行历史的 SQLite 持久化，平台能力）
+
+pub mod tasks;
 
 use axum::Router;
 use serde::Serialize;

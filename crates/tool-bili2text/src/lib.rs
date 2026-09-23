@@ -1,12 +1,13 @@
 //! B 站视频转文字工具（业务编排层）。
 //!
 //! 这个 crate 只做编排：调用平台能力（bili-client 的接口能力、平台账号服务
-//! 持有的登录态）组合出「视频 → 文本」的业务。
+//! 持有的登录态、平台任务存储）组合出「视频 → 文本」的业务。
 //!
 //! - 字幕提取：`POST /tracks`、`POST /extract`（文本 + SRT）
 //! - ASR 转写（平台下载能力 + 平台 ASR 能力，规划中）
 //!
-//! 登录流程不在本工具——那是平台账号服务（`/api/platform/bili/*`）的职责。
+//! 登录流程不在本工具——那是平台账号服务（`/api/platform/bili/*`）的职责；
+//! 每次提取会作为任务记录写入平台任务存储（`/api/platform/tasks`）。
 
 use std::sync::Arc;
 
@@ -18,17 +19,27 @@ use axum::{
 };
 use bili_client::{BiliClient, BiliError};
 use platform_core::Tool;
+use platform_core::tasks::{TaskRecord, TaskStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// 工具实例：持有共享的 B 站客户端（登录态由平台服务管理）。
+/// 工具运行时状态：平台能力引用集合。
+#[derive(Clone)]
+pub struct ToolState {
+    pub client: Arc<BiliClient>,
+    pub tasks: Arc<TaskStore>,
+}
+
+/// 工具实例。
 pub struct Bili2TextTool {
-    client: Arc<BiliClient>,
+    state: ToolState,
 }
 
 impl Bili2TextTool {
-    pub fn new(client: Arc<BiliClient>) -> Self {
-        Self { client }
+    pub fn new(client: Arc<BiliClient>, tasks: Arc<TaskStore>) -> Self {
+        Self {
+            state: ToolState { client, tasks },
+        }
     }
 }
 
@@ -66,9 +77,10 @@ fn err_resp(e: BiliError) -> ApiError {
 
 /// `POST /api/tools/bili2text/tracks` — 列出视频可用字幕轨。
 async fn tracks(
-    State(client): State<Arc<BiliClient>>,
+    State(state): State<ToolState>,
     Json(req): Json<VideoReq>,
 ) -> Result<Json<Value>, ApiError> {
+    let client = &state.client;
     let bvid = client.resolve_bvid(&req.input).await.map_err(err_resp)?;
     let info = client.video_view(&bvid).await.map_err(err_resp)?;
     let list = client
@@ -120,10 +132,67 @@ fn no_subtitle(bvid: &str, title: &str) -> Json<Value> {
 }
 
 /// `POST /api/tools/bili2text/extract` — 提取字幕为文本（含 SRT）。
+/// 每次执行（无论成败）都会作为任务记录写入平台任务存储。
 async fn extract(
-    State(client): State<Arc<BiliClient>>,
+    State(state): State<ToolState>,
     Json(req): Json<VideoReq>,
 ) -> Result<Json<Value>, ApiError> {
+    let result = run_extract(&state.client, &req).await;
+
+    match result {
+        Ok(value) => {
+            let task = TaskRecord {
+                id: String::new(),
+                tool_id: "bili2text".into(),
+                kind: "subtitle_extract".into(),
+                input: req.input.clone(),
+                title: value["title"].as_str().map(String::from),
+                bvid: value["bvid"].as_str().map(String::from),
+                status: "succeeded".into(),
+                error: None,
+                lang: value["subtitle"]["lan"].as_str().map(String::from),
+                lines_count: value["lines_count"].as_i64(),
+                duration_secs: value["duration_secs"].as_i64(),
+                result_text: value["text"].as_str().map(String::from),
+                result_srt: value["srt"].as_str().map(String::from),
+                created_at: 0,
+                finished_at: None,
+            };
+            // 记录失败不影响业务响应（历史是尽力而为）
+            if let Ok(id) = state.tasks.record(task) {
+                let mut v = value;
+                v["task_id"] = json!(id);
+                Ok(Json(v))
+            } else {
+                Ok(Json(value))
+            }
+        }
+        Err((status, Json(mut body))) => {
+            let task = TaskRecord {
+                id: String::new(),
+                tool_id: "bili2text".into(),
+                kind: "subtitle_extract".into(),
+                input: req.input.clone(),
+                title: body["title"].as_str().map(String::from),
+                bvid: body["bvid"].as_str().map(String::from),
+                status: "failed".into(),
+                error: body["error"].as_str().map(String::from),
+                lang: req.lang.clone(),
+                lines_count: None,
+                duration_secs: None,
+                result_text: None,
+                result_srt: None,
+                created_at: 0,
+                finished_at: None,
+            };
+            let _ = state.tasks.record(task);
+            Err((status, Json(body)))
+        }
+    }
+}
+
+/// 实际提取逻辑（与任务落库解耦）。
+async fn run_extract(client: &BiliClient, req: &VideoReq) -> Result<Value, ApiError> {
     let bvid = client.resolve_bvid(&req.input).await.map_err(err_resp)?;
     let info = client.video_view(&bvid).await.map_err(err_resp)?;
     let list = client
@@ -132,7 +201,8 @@ async fn extract(
         .map_err(err_resp)?;
 
     if list.is_empty() {
-        return Ok(no_subtitle(&bvid, &info.title));
+        // 业务性空结果：HTTP 200 + error 字段（前端按错误分支处理）
+        return Err((StatusCode::OK, no_subtitle(&bvid, &info.title)));
     }
 
     let track = match pick_track(&list, req.lang.as_deref()) {
@@ -161,7 +231,7 @@ async fn extract(
         .join("\n");
     let srt = to_srt(&lines);
 
-    Ok(Json(json!({
+    Ok(json!({
         "bvid": bvid,
         "title": info.title,
         "duration_secs": info.duration_secs,
@@ -173,7 +243,7 @@ async fn extract(
         "lines_count": lines.len(),
         "text": text,
         "srt": srt,
-    })))
+    }))
 }
 
 /// 字幕行转 SRT 格式（00:00:00,000 --> ...）。
@@ -212,6 +282,7 @@ async fn info() -> Json<Value> {
             "needs_login": true,
             "status": "available",
             "login_via": "platform: /api/platform/bili",
+            "history_via": "platform: /api/platform/tasks",
         },
         "asr": {
             "engine": "sense-voice (sherpa-onnx)",
@@ -240,7 +311,7 @@ impl Tool for Bili2TextTool {
             .route("/info", get(info))
             .route("/tracks", post(tracks))
             .route("/extract", post(extract))
-            .with_state(self.client.clone())
+            .with_state(self.state.clone())
     }
 }
 
