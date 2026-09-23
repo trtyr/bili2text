@@ -78,3 +78,95 @@ body {
 .card button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .empty { color: #6b7688; }
+
+/* 通用按钮（工具页/登录） */
+button.ghost,
+.modal button,
+.result-actions button,
+.panel .input-row button {
+  background: #1d3a66;
+  border: 1px solid #3b82f6;
+  color: #cfe1ff;
+  border-radius: 8px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+button.ghost:disabled,
+.result-actions button:disabled,
+.panel .input-row button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.spacer { flex: 1; }
+
+/* 登录弹窗 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal {
+  background: #121826;
+  border: 1px solid #2a3140;
+  border-radius: 16px;
+  padding: 28px 36px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+.modal h3 { margin: 0; }
+.modal p { margin: 0; color: #9aa3b2; font-size: 14px; }
+.qr-box {
+  background: #fff;
+  padding: 10px;
+  border-radius: 12px;
+  display: inline-block;
+}
+
+/* 工具页 */
+.panel {
+  border: 1px solid #2a3140;
+  border-radius: 14px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  margin-bottom: 16px;
+}
+.input-row { display: flex; gap: 10px; }
+.input-row input {
+  flex: 1;
+  background: #0d1117;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  color: #e8eaed;
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+}
+.input-row input:focus { border-color: #3b82f6; }
+.hint { color: #6b7688; font-size: 13px; margin: 12px 0 0; }
+
+.error-panel { border-color: #6b2c2c; background: #241214; }
+.error-panel p { margin: 0; color: #ff8f8f; }
+
+.result-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.result-head h2 { margin: 0 0 6px; font-size: 18px; }
+.result-head .meta { color: #6b7688; font-size: 13px; }
+.panel textarea {
+  width: 100%;
+  margin-top: 12px;
+  background: #0d1117;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  color: #c9d1d9;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.7;
+  resize: vertical;
+  font-family: inherit;
+}
+.result-actions { display: flex; gap: 10px; margin-top: 12px; }

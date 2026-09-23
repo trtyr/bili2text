@@ -1,33 +1,219 @@
 //! B 站视频转文字工具。
 //!
-//! 两条链路：
-//! ① 优先提取站内字幕（CC / AI 字幕，多语言可选）；
-//! ② 无字幕时下载音频轨，用 SenseVoice（sherpa-rs 绑定）本地转写。
-//!
-//! 骨架阶段仅注册工具元信息与 `/info` 端点，转写与登录流程在后续任务接入。
+//! 字幕链路（本阶段实现）：贴链接 → 解析 BV → 视频信息 → 字幕列表（CC/AI、
+//! 多语言）→ 下载字幕 → 纯文本 / SRT。
+//! ASR 链路（SenseVoice 本地转写）在后续任务接入。
 
-use axum::{Json, Router, routing::get};
+use std::sync::Arc;
+
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    routing::{get, post},
+};
+use bili_client::{BiliClient, BiliError};
 use platform_core::Tool;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
-#[derive(Debug, Default)]
-pub struct Bili2TextTool;
+/// 工具实例：持有共享的 B 站客户端（登录态在其中管理）。
+pub struct Bili2TextTool {
+    client: Arc<BiliClient>,
+}
+
+impl Bili2TextTool {
+    pub fn new(client: Arc<BiliClient>) -> Self {
+        Self { client }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VideoReq {
+    /// BV 号、视频页链接或 b23.tv 短链。
+    pub input: String,
+    /// 可选：指定字幕语言（lan，如 "zh-Hans" / "ai-zh"）；缺省自动挑选。
+    pub lang: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrackOut {
+    pub lan: String,
+    pub lan_doc: String,
+    pub is_ai: bool,
+}
+
+type ApiError = (StatusCode, Json<Value>);
+
+fn err_resp(e: BiliError) -> ApiError {
+    let (status, code) = match &e {
+        BiliError::NotLoggedIn => (StatusCode::UNAUTHORIZED, "login_required"),
+        BiliError::BadInput(_) => (StatusCode::BAD_REQUEST, "bad_input"),
+        BiliError::Api { .. } => (StatusCode::BAD_GATEWAY, "bili_api_error"),
+        BiliError::Network(_) | BiliError::Io(_) | BiliError::Json(_) => {
+            (StatusCode::BAD_GATEWAY, "network_error")
+        }
+    };
+    (
+        status,
+        Json(json!({ "error": code, "message": e.to_string() })),
+    )
+}
+
+/// `POST /api/tools/bili2text/tracks` — 列出视频可用字幕轨。
+async fn tracks(
+    State(client): State<Arc<BiliClient>>,
+    Json(req): Json<VideoReq>,
+) -> Result<Json<Value>, ApiError> {
+    let bvid = client.resolve_bvid(&req.input).await.map_err(err_resp)?;
+    let info = client.video_view(&bvid).await.map_err(err_resp)?;
+    let list = client
+        .subtitle_tracks(&bvid, info.cid)
+        .await
+        .map_err(err_resp)?;
+
+    let tracks: Vec<TrackOut> = list
+        .iter()
+        .map(|t| TrackOut {
+            lan: t.lan.clone(),
+            lan_doc: t.lan_doc.clone(),
+            is_ai: t.is_ai,
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "bvid": bvid,
+        "title": info.title,
+        "duration_secs": info.duration_secs,
+        "tracks": tracks,
+        "logged_in": client.credential().header_value().is_some(),
+    })))
+}
+
+/// 挑选字幕轨：显式 lang > 非 AI 中文 > 非 AI 第一条 > AI 中文 > 第一条。
+fn pick_track<'a>(
+    tracks: &'a [bili_client::video::SubtitleTrack],
+    lang: Option<&str>,
+) -> Option<&'a bili_client::video::SubtitleTrack> {
+    if let Some(want) = lang {
+        return tracks.iter().find(|t| t.lan == want);
+    }
+    tracks
+        .iter()
+        .find(|t| !t.is_ai && t.lan.starts_with("zh"))
+        .or_else(|| tracks.iter().find(|t| !t.is_ai))
+        .or_else(|| tracks.iter().find(|t| t.is_ai && t.lan.starts_with("zh")))
+        .or_else(|| tracks.first())
+}
+
+fn no_subtitle(bvid: &str, title: &str) -> Json<Value> {
+    Json(json!({
+        "error": "no_subtitle",
+        "message": "该视频没有可用字幕（AI 字幕需要登录，且并非所有视频都生成过）",
+        "bvid": bvid,
+        "title": title,
+    }))
+}
+
+/// `POST /api/tools/bili2text/extract` — 提取字幕为文本（含 SRT）。
+async fn extract(
+    State(client): State<Arc<BiliClient>>,
+    Json(req): Json<VideoReq>,
+) -> Result<Json<Value>, ApiError> {
+    let bvid = client.resolve_bvid(&req.input).await.map_err(err_resp)?;
+    let info = client.video_view(&bvid).await.map_err(err_resp)?;
+    let list = client
+        .subtitle_tracks(&bvid, info.cid)
+        .await
+        .map_err(err_resp)?;
+
+    if list.is_empty() {
+        return Ok(no_subtitle(&bvid, &info.title));
+    }
+
+    let track = match pick_track(&list, req.lang.as_deref()) {
+        Some(t) => t.clone(),
+        None => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "lang_not_found",
+                    "message": "指定的字幕语言不存在",
+                    "available": list.iter().map(|t| t.lan.clone()).collect::<Vec<_>>(),
+                })),
+            ));
+        }
+    };
+
+    let lines = client
+        .subtitle_content(&track.url)
+        .await
+        .map_err(err_resp)?;
+
+    let text = lines
+        .iter()
+        .map(|l| l.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let srt = to_srt(&lines);
+
+    Ok(Json(json!({
+        "bvid": bvid,
+        "title": info.title,
+        "duration_secs": info.duration_secs,
+        "subtitle": {
+            "lan": track.lan,
+            "lan_doc": track.lan_doc,
+            "is_ai": track.is_ai,
+        },
+        "lines_count": lines.len(),
+        "text": text,
+        "srt": srt,
+    })))
+}
+
+/// 字幕行转 SRT 格式（00:00:00,000 --> ...）。
+fn to_srt(lines: &[bili_client::video::SubtitleLine]) -> String {
+    fn stamp(secs: f64) -> String {
+        let total_ms = (secs.max(0.0) * 1000.0).round() as u64;
+        let h = total_ms / 3_600_000;
+        let m = (total_ms % 3_600_000) / 60_000;
+        let s = (total_ms % 60_000) / 1000;
+        let ms = total_ms % 1000;
+        format!("{h:02}:{m:02}:{s:02},{ms:03}")
+    }
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            format!(
+                "{}\n{} --> {}\n{}\n",
+                i + 1,
+                stamp(l.from),
+                stamp(l.to),
+                l.content
+            )
+        })
+        .collect()
+}
 
 /// `GET /api/tools/bili2text/info` — 工具能力自述。
-async fn info() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
+async fn info() -> Json<Value> {
+    Json(json!({
         "id": "bili2text",
         "name": "B站视频转文字",
         "modes": ["subtitle", "asr"],
         "subtitle": {
             "sources": ["cc", "ai"],
             "needs_login": true,
+            "status": "available",
         },
         "asr": {
             "engine": "sense-voice (sherpa-onnx)",
             "languages": ["zh", "en", "ja", "ko", "yue"],
             "planned": true,
         },
-        "status": "scaffold",
+        "endpoints": ["POST /tracks", "POST /extract"],
     }))
 }
 
@@ -45,6 +231,55 @@ impl Tool for Bili2TextTool {
     }
 
     fn router(&self) -> Router {
-        Router::new().route("/info", get(info))
+        Router::new()
+            .route("/info", get(info))
+            .route("/tracks", post(tracks))
+            .route("/extract", post(extract))
+            .with_state(self.client.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn srt_format() {
+        let lines = vec![
+            bili_client::video::SubtitleLine {
+                from: 0.0,
+                to: 1.5,
+                content: "你好".into(),
+            },
+            bili_client::video::SubtitleLine {
+                from: 62.25,
+                to: 65.0,
+                content: "世界".into(),
+            },
+        ];
+        let srt = to_srt(&lines);
+        assert!(srt.starts_with("1\n00:00:00,000 --> 00:00:01,500\n你好\n"));
+        assert!(srt.contains("2\n00:01:02,250 --> 00:01:05,000\n世界"));
+    }
+
+    #[test]
+    fn pick_prefers_native_zh() {
+        let mk = |lan: &str, ai: bool| bili_client::video::SubtitleTrack {
+            id: String::new(),
+            lan: lan.into(),
+            lan_doc: String::new(),
+            is_ai: ai,
+            url: String::new(),
+        };
+        // 有官方字幕（即使非中文）也不选 AI 字幕
+        let tracks = vec![mk("en-US", false), mk("ai-zh", true)];
+        assert_eq!(pick_track(&tracks, None).unwrap().lan, "en-US");
+
+        // 中文官方 > 英文官方 > AI 中文 > AI 任意
+        let tracks = vec![mk("ai-zh", true), mk("zh-Hans", false)];
+        assert_eq!(pick_track(&tracks, None).unwrap().lan, "zh-Hans");
+
+        let tracks = vec![mk("ai-zh", true)];
+        assert_eq!(pick_track(&tracks, None).unwrap().lan, "ai-zh");
     }
 }
