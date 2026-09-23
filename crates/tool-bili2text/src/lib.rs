@@ -1,16 +1,19 @@
-//! B 站视频转文字工具。
+//! B 站视频转文字工具（完整子系统）。
 //!
-//! 字幕链路（本阶段实现）：贴链接 → 解析 BV → 视频信息 → 字幕列表（CC/AI、
-//! 多语言）→ 下载字幕 → 纯文本 / SRT。
+//! 功能面：
+//! - 扫码登录（`/auth/*`）：登录是本工具内部能力，路由挂 `/api/tools/bili2text/auth/*`
+//! - 字幕提取（`/tracks`、`/extract`）：贴链接 → 字幕列表（CC/AI、多语言）→ 文本/SRT
+//!
 //! ASR 链路（SenseVoice 本地转写）在后续任务接入。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Query, State},
     http::StatusCode,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use bili_client::{BiliClient, BiliError};
 use platform_core::Tool;
@@ -59,6 +62,69 @@ fn err_resp(e: BiliError) -> ApiError {
         Json(json!({ "error": code, "message": e.to_string() })),
     )
 }
+
+// ---- 扫码登录（工具内部能力） ----
+
+/// `POST /api/tools/bili2text/auth/qrcode` — 申请登录二维码。
+async fn auth_qrcode(
+    State(client): State<Arc<BiliClient>>,
+) -> Result<Json<Value>, ApiError> {
+    let qr = client.qrcode_generate().await.map_err(err_resp)?;
+    Ok(Json(json!({
+        "qrcode_key": qr.qrcode_key,
+        "qr_content": qr.url,
+        "expires_in_secs": 180,
+    })))
+}
+
+/// `GET /api/tools/bili2text/auth/qrcode/poll?qrcode_key=` — 轮询扫码状态。
+async fn auth_poll(
+    State(client): State<Arc<BiliClient>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let Some(key) = params.get("qrcode_key") else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "missing_qrcode_key" })),
+        ));
+    };
+    let poll = client.qrcode_poll(key).await.map_err(err_resp)?;
+    let mut logged_in = false;
+    if poll.code == bili_client::qrcode::POLL_SUCCESS {
+        if let Some(cred) = poll.credential {
+            client.set_credential(cred).map_err(err_resp)?;
+            logged_in = true;
+        }
+    }
+    Ok(Json(json!({
+        "code": poll.code,
+        "message": poll.message,
+        "logged_in": logged_in,
+        // 状态语义：86101 未扫 / 86090 已扫未确认 / 86038 已失效 / 0 成功
+        "status": match poll.code {
+            bili_client::qrcode::POLL_SUCCESS => "success",
+            bili_client::qrcode::POLL_SCANNED => "scanned",
+            bili_client::qrcode::POLL_EXPIRED => "expired",
+            _ => "waiting",
+        },
+    })))
+}
+
+/// `GET /api/tools/bili2text/auth/status` — 登录态状态
+/// （has_credential 为本地是否有存档；logged_in 真实请求 B 站校验）。
+async fn auth_status(State(client): State<Arc<BiliClient>>) -> Json<Value> {
+    let has = client.credential().header_value().is_some();
+    let logged_in = if has { client.is_logged_in().await } else { false };
+    Json(json!({ "has_credential": has, "logged_in": logged_in }))
+}
+
+/// `DELETE /api/tools/bili2text/auth` — 登出（清除本地登录态）。
+async fn auth_logout(State(client): State<Arc<BiliClient>>) -> Result<Json<Value>, ApiError> {
+    client.clear_credential().map_err(err_resp)?;
+    Ok(Json(json!({ "logged_out": true })))
+}
+
+// ---- 字幕提取 ----
 
 /// `POST /api/tools/bili2text/tracks` — 列出视频可用字幕轨。
 async fn tracks(
@@ -213,7 +279,7 @@ async fn info() -> Json<Value> {
             "languages": ["zh", "en", "ja", "ko", "yue"],
             "planned": true,
         },
-        "endpoints": ["POST /tracks", "POST /extract"],
+        "endpoints": ["POST /tracks", "POST /extract", "auth: qrcode/poll/status/logout"],
     }))
 }
 
@@ -235,6 +301,10 @@ impl Tool for Bili2TextTool {
             .route("/info", get(info))
             .route("/tracks", post(tracks))
             .route("/extract", post(extract))
+            .route("/auth/qrcode", post(auth_qrcode))
+            .route("/auth/qrcode/poll", get(auth_poll))
+            .route("/auth/status", get(auth_status))
+            .route("/auth", delete(auth_logout))
             .with_state(self.client.clone())
     }
 }
