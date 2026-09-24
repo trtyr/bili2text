@@ -1,19 +1,18 @@
-//! 平台任务存储：工具执行的持久化历史（SQLite）。
+//! 任务历史存储：提取/转写记录的 SQLite 持久化。
 //!
-//! 这是平台能力：所有工具的执行记录（提取/转写/未来的长任务）统一落在这里，
-//! 供前端历史回看与未来的任务队列/进度推送复用。
-//!
-//! 当前是「完成后落一条记录」的同步模型；长任务（如 ASR）接入时在同一张表上
-//! 扩展 pending/running 状态机与进度字段。
+//! 短任务（字幕提取）「完成后落一条记录」；长任务（本地转写）先写
+//! running 记录，终态回写结果。历史用于 `bili2text history` 回看。
 
 use rusqlite::Connection;
 use serde::Serialize;
+
+/// 历史记录归属的应用标识（schema 保留 tool_id 列以兼容旧库）。
+const TOOL_ID: &str = "bili2text";
 
 /// 一条任务记录。
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskRecord {
     pub id: String,
-    pub tool_id: String,
     /// 任务类型，如 subtitle_extract / asr_transcribe。
     pub kind: String,
     /// 用户原始输入（链接/BV 号等）。
@@ -23,7 +22,7 @@ pub struct TaskRecord {
     pub bvid: Option<String>,
     /// pending / running / succeeded / failed。
     pub status: String,
-    /// 运行阶段（长任务），如 downloading / transcoding / transcribing。
+    /// 运行阶段（长任务），如 downloading / transcribing。
     pub stage: Option<String>,
     /// 进度 0-100。
     pub progress: Option<i64>,
@@ -31,7 +30,7 @@ pub struct TaskRecord {
     pub lang: Option<String>,
     pub lines_count: Option<i64>,
     pub duration_secs: Option<i64>,
-    /// 结果全文（仅详情接口返回）。
+    /// 结果全文（仅详情返回）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result_text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,11 +40,10 @@ pub struct TaskRecord {
     pub finished_at: Option<i64>,
 }
 
-/// 列表项（不含结果全文，保持轻量）。
+/// 列表项（不含结果全文）。
 #[derive(Debug, Serialize)]
 pub struct TaskListItem {
     pub id: String,
-    pub tool_id: String,
     pub kind: String,
     pub input: String,
     pub title: Option<String>,
@@ -95,7 +93,6 @@ fn migrate(conn: &Connection) {
 fn row_to_record(row: &rusqlite::Row<'_>, with_result: bool) -> rusqlite::Result<TaskRecord> {
     Ok(TaskRecord {
         id: row.get("id")?,
-        tool_id: row.get("tool_id")?,
         kind: row.get("kind")?,
         input: row.get("input")?,
         title: row.get("title")?,
@@ -146,7 +143,7 @@ impl TaskStore {
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
             rusqlite::params![
                 task.id,
-                task.tool_id,
+                TOOL_ID,
                 task.kind,
                 task.input,
                 task.title,
@@ -215,19 +212,17 @@ impl TaskStore {
         Ok(())
     }
 
-    /// 任务列表（按时间倒序；可按工具过滤；不含结果全文）。
-    pub fn list(&self, tool_id: Option<&str>, limit: u32) -> rusqlite::Result<Vec<TaskListItem>> {
+    /// 任务列表（按时间倒序；不含结果全文）。
+    pub fn list(&self, limit: u32) -> rusqlite::Result<Vec<TaskListItem>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, tool_id, kind, input, title, bvid, status, stage, progress, error, lang, \
+            "SELECT id, kind, input, title, bvid, status, stage, progress, error, lang, \
              lines_count, duration_secs, created_at \
-             FROM tasks WHERE (?1 IS NULL OR tool_id = ?1) \
-             ORDER BY created_at DESC LIMIT ?2",
+             FROM tasks ORDER BY created_at DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map(rusqlite::params![tool_id, limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![limit], |row| {
             Ok(TaskListItem {
                 id: row.get("id")?,
-                tool_id: row.get("tool_id")?,
                 kind: row.get("kind")?,
                 input: row.get("input")?,
                 title: row.get("title")?,
@@ -283,7 +278,6 @@ mod tests {
     fn sample() -> TaskRecord {
         TaskRecord {
             id: String::new(),
-            tool_id: "bili2text".into(),
             kind: "subtitle_extract".into(),
             input: "BV1J7hE6aEDQ".into(),
             title: Some("测试视频".into()),
@@ -308,20 +302,14 @@ mod tests {
         let id = store.record(sample()).unwrap();
         assert!(!id.is_empty());
 
-        // 列表：有内容、不含全文
-        let list = store.list(Some("bili2text"), 10).unwrap();
+        let list = store.list(10).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].title.as_deref(), Some("测试视频"));
 
-        // 其他工具过滤为空
-        assert!(store.list(Some("other"), 10).unwrap().is_empty());
-
-        // 详情：含全文
         let detail = store.get(&id).unwrap().unwrap();
         assert_eq!(detail.result_text.as_deref(), Some("全文"));
         assert!(detail.finished_at.is_some());
 
-        // 删除
         assert!(store.delete(&id).unwrap());
         assert!(store.get(&id).unwrap().is_none());
         assert!(!store.delete(&id).unwrap());

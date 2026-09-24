@@ -1,16 +1,5 @@
 # Rust
 /target
+.rumdl_cache/
 
-# Frontend
-node_modules/
-frontend/dist/
-
-# Python e2e
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# 运行时数据（SQLite、模型、临时下载等）
-data/
-data/audio/
+# 运行时数据（登录态 / 历史库 / ASR 模型）已迁至 ~/.local/share/bili2text/
