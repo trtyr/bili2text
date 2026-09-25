@@ -83,16 +83,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "asr"
-version = "0.2.0"
-dependencies = [
- "hound",
- "serde",
- "sherpa-rs",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -141,7 +131,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bili-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "md-5",
  "reqwest",
@@ -155,11 +145,11 @@ name = "bili2text"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "asr",
  "bili-client",
+ "bili2text-asr",
+ "bili2text-downloader",
  "chrono",
  "clap",
- "downloader",
  "qrencode",
  "rusqlite",
  "serde",
@@ -167,6 +157,24 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "bili2text-asr"
+version = "0.2.0"
+dependencies = [
+ "hound",
+ "serde",
+ "sherpa-rs",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "bili2text-downloader"
+version = "0.2.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -584,14 +592,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
 dependencies = [
  "litrs",
-]
-
-[[package]]
-name = "downloader"
-version = "0.2.0"
-dependencies = [
- "thiserror 2.0.20",
- "tokio",
 ]
 
 [[package]]

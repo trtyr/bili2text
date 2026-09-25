@@ -1,7 +1,16 @@
 [package]
-name = "asr"
+name = "bili2text-asr"
+description = "SenseVoice local speech-to-text engine (sherpa-rs binding) used by bili2text"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["asr", "sensevoice", "speech-recognition"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "asr"
+path = "src/lib.rs"
 
 [dependencies]
 hound = "3.5.1"

@@ -1,19 +1,31 @@
 [package]
 name = "bili2text"
-version = "0.2.0"
-edition = "2024"
+description = "Turn Bilibili videos into text: extract subtitles or transcribe locally with SenseVoice, saved as Markdown/SRT"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["bilibili", "subtitle", "transcribe", "asr", "cli"]
+categories = ["command-line-utilities", "multimedia"]
 
 [[bin]]
 name = "bili2text"
 path = "src/main.rs"
 
+[features]
+default = []
+# 本地转写（SenseVoice / sherpa-rs）：依赖 C++ 工具链（cmake），故默认关闭。
+transcribe = ["dep:asr"]
+
 [dependencies]
 anyhow = "1.0"
-asr = { path = "../asr" }
+asr = { package = "bili2text-asr", path = "../asr", version = "0.2.0", optional = true }
 bili-client.workspace = true
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
-downloader = { path = "../downloader" }
+downloader = { package = "bili2text-downloader", path = "../downloader", version = "0.2.0" }
 qrencode = "0.14"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }

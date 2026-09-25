@@ -165,6 +165,7 @@ impl TaskStore {
     }
 
     /// 更新运行中任务的阶段与进度（长任务心跳）。
+    #[cfg(feature = "transcribe")]
     pub fn update_progress(
         &self,
         id: &str,
@@ -180,6 +181,7 @@ impl TaskStore {
     }
 
     /// 完成长任务：写入终态与结果。
+    #[cfg(feature = "transcribe")]
     #[allow(clippy::too_many_arguments)]
     pub fn finish(
         &self,

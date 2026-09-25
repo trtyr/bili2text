@@ -1,7 +1,16 @@
 [package]
-name = "downloader"
+name = "bili2text-downloader"
+description = "Audio track fetcher wrapping yt-dlp + ffmpeg, used by bili2text"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["yt-dlp", "audio", "download"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "downloader"
+path = "src/lib.rs"
 
 [dependencies]
 thiserror = "2.0.20"

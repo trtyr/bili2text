@@ -24,6 +24,23 @@ def _require_bin() -> None:
         pytest.exit(f"被测二进制不存在：{BIN}（先在仓库根执行 cargo build）", returncode=1)
 
 
+def _binary_has_transcribe() -> bool:
+    """探测二进制是否带转写功能（--version 输出含 transcribe 标记）。"""
+    _require_bin()
+    try:
+        r = subprocess.run([str(BIN), "--version"], capture_output=True, text=True, timeout=10)
+    except OSError:
+        return False
+    return "transcribe" in r.stdout
+
+
+@pytest.fixture(scope="session")
+def transcribe_enabled() -> None:
+    """要求被测二进制带 transcribe feature，否则 skip 所属用例。"""
+    if not _binary_has_transcribe():
+        pytest.skip("当前构建不含转写功能（先 cargo build --features transcribe）")
+
+
 def _runner(home: Path, cwd: Path):
     env = {**os.environ, "HOME": str(home)}
 

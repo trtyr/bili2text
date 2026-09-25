@@ -38,12 +38,15 @@ bili2text 是一个把 B 站视频变成文字的命令行工具。看长视频�
 
 ## 30 秒上手
 
-前置：装好 [Rust 工具链](https://rustup.rs)。想用本地转写，还需要
-`yt-dlp`、`ffmpeg`，以及跑一次模型下载脚本（约 230MB 压缩包）。
+前置：装好 [Rust 工具链](https://rustup.rs)。想用本地转写，安装时加
+`--features transcribe`（多一步 C++ 编译，需要 cmake），运行时还需要
+`yt-dlp`、`ffmpeg`——缺什么跑 `bili2text doctor --fix`，能自动补齐
+（含 SenseVoice 模型下载，约 230MB 压缩包）。
 
 ```bash
-cargo install --path crates/bili2text   # 或 git clone 后在本仓库执行
-bili2text login                         # 扫码登录（终端出二维码，AI 字幕需要）
+cargo install bili2text                            # 字幕提取版（纯 Rust）
+cargo install bili2text --features transcribe      # + 本地转写（需 cmake）
+bili2text login                                    # 扫码登录（AI 字幕需要）
 bili2text https://www.bilibili.com/video/BV17pFLzXEEp/
 ```
 
@@ -63,6 +66,8 @@ bili2text https://www.bilibili.com/video/BV17pFLzXEEp/
 - 没字幕的视频也能转：yt-dlp 拉音轨 → ffmpeg 转码 → SenseVoice + VAD
   分段推理，全程本机
 - 支持中 / 英 / 日 / 韩 / 粤
+- 需要转写构建：`cargo install bili2text --features transcribe`
+  （轻量构建下 `--transcribe` 会提示安装命令）
 
 #### 账号与历史
 
@@ -107,14 +112,17 @@ bili2text history rm <id>             删除记录
 ## 从源码构建
 
 ```bash
-cargo build                              # 构建
-cargo test                               # 单元测试（19 个）
-cd e2e && ./.venv/bin/python -m pytest -v   # 端到端（Python，18 个）
+cargo build                                   # 构建（轻量，字幕提取）
+cargo build --features transcribe             # + 本地转写（需 cmake）
+cargo test                                    # 单元测试（轻量 18 个 / 转写构建 19 个）
+cd e2e && ./.venv/bin/python -m pytest -v     # 端到端（Python；转写用例需转写构建，自动跳过）
 ```
 
 架构、接口调研、退出码设计、数据目录布局等深度内容见
 [docs/design.md](docs/design.md)。一句话版：workspace 四个 crate——
-`bili2text`（CLI 应用）+ `bili-client` / `downloader` / `asr`（能力库）。
+`bili2text`（CLI 应用）+ `bili-client` / `bili2text-downloader` /
+`bili2text-asr`（能力库，crates.io 包名带 `bili2text-` 前缀，库名保持
+`bili-client` / `downloader` / `asr`）。
 
 ---
 

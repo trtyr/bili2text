@@ -7,29 +7,40 @@
 //!
 //! 退出码见 [`error::AppError`] 文档（按错误类别区分）。
 
+#[cfg(feature = "transcribe")]
+mod transcribe;
+mod doctor;
 mod error;
 mod extract;
 mod log;
 mod login;
 mod output;
 mod tasks;
-mod transcribe;
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
+#[cfg(feature = "transcribe")]
 use downloader::AudioDownloader;
 
 use crate::error::AppError;
 use crate::extract::ExtractReq;
 use crate::tasks::{TaskRecord, TaskStore};
+#[cfg(feature = "transcribe")]
 use crate::transcribe::AsrSlot;
+
+/// `--version` 输出：带功能标记，供脚本 / e2e 探测当前构建的能力。
+const VERSION_TEXT: &str = if cfg!(feature = "transcribe") {
+    concat!(env!("CARGO_PKG_VERSION"), " (with transcribe)")
+} else {
+    concat!(env!("CARGO_PKG_VERSION"), " (subtitles only)")
+};
 
 #[derive(Parser)]
 #[command(
     name = "bili2text",
-    version,
+    version = VERSION_TEXT,
     about = "B 站视频转文字：提取字幕或本地转写，结果存为本地文档"
 )]
 struct Cli {
@@ -64,6 +75,12 @@ enum Command {
     Logout,
     /// 查看登录态
     Status,
+    /// 环境体检：检查依赖与数据，--fix 自动修复（下载模型 / 安装 yt-dlp、ffmpeg）
+    Doctor {
+        /// 自动修复可修复项
+        #[arg(long)]
+        fix: bool,
+    },
     /// 历史记录（list / show <id> / rm <id>；id 支持前缀）
     History {
         #[arg(default_value = "list")]
@@ -116,6 +133,13 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         Some(Command::Login) => login::login(&client).await,
         Some(Command::Logout) => login::logout(&client).await,
         Some(Command::Status) => login::status(&client).await,
+        Some(Command::Doctor { fix }) => {
+            let code = doctor::run(&client, &data_dir, fix).await?;
+            if code != 0 {
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         Some(Command::History { action, id }) => history(&store, action, id.as_deref()),
         None => {
             let input = cli.input.as_deref().ok_or_else(|| {
@@ -215,6 +239,7 @@ async fn convert(
 }
 
 /// 本地转写流程：先落 running 历史，完成后回写终态。
+#[cfg(feature = "transcribe")]
 async fn transcribe_flow(
     client: &bili_client::BiliClient,
     store: &TaskStore,
@@ -246,6 +271,17 @@ async fn transcribe_flow(
         .map_err(|e| AppError::Storage(e.to_string()))?;
 
     let downloader = AudioDownloader::new(data_dir.join("audio"));
+    // 模型缺失提前给出可行动的错误（而非推理时的底层报错）
+    if !data_dir
+        .join("models")
+        .join(transcribe::MODEL_SUBDIR)
+        .join("model.int8.onnx")
+        .exists()
+    {
+        return Err(AppError::ExternalMissing(
+            "SenseVoice 模型",
+        ));
+    }
     let asr_slot = std::sync::Arc::new(AsrSlot::with_model_dir(
         data_dir.join("models").join(transcribe::MODEL_SUBDIR),
     ));
@@ -296,6 +332,21 @@ async fn transcribe_flow(
             Err(e)
         }
     }
+}
+
+/// 轻量构建（不含 transcribe feature）下的占位：给出带安装指引的明确错误。
+#[cfg(not(feature = "transcribe"))]
+async fn transcribe_flow(
+    _client: &bili_client::BiliClient,
+    _store: &TaskStore,
+    _data_dir: &std::path::Path,
+    _input: &str,
+) -> Result<output::Doc, AppError> {
+    Err(AppError::Usage(
+        "当前构建不含本地转写功能（--transcribe）。\
+         转写版安装：cargo install bili2text --features transcribe（需 cmake）"
+            .into(),
+    ))
 }
 
 /// 历史记录子命令。

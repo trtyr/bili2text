@@ -16,6 +16,7 @@
 //! - `60` 本地存储 / IO 错误
 
 use bili_client::BiliError;
+#[cfg(feature = "transcribe")]
 use downloader::DownloadError;
 
 #[derive(Debug, thiserror::Error)]
@@ -50,19 +51,23 @@ pub enum AppError {
     )]
     NoSubtitle { bvid: String, title: String },
 
-    /// 外部依赖缺失（40）。
-    #[error("外部依赖缺失：{0}（请安装后重试，或用环境变量 YTDLP_BIN / FFMPEG_BIN 指定路径）")]
+    /// 外部依赖缺失（40）：模型、yt-dlp、ffmpeg 等。
+    #[cfg(feature = "transcribe")]
+    #[error("外部依赖缺失：{0}（可运行 bili2text doctor --fix 检测并自动修复）")]
     ExternalMissing(&'static str),
 
     /// yt-dlp 下载失败（41），进程 stderr 原样透传。
+    #[cfg(feature = "transcribe")]
     #[error("yt-dlp 下载失败：\n{0}")]
     YtDlpFailed(String),
 
     /// ffmpeg 转码失败（42），进程 stderr 原样透传。
+    #[cfg(feature = "transcribe")]
     #[error("ffmpeg 转码失败：\n{0}")]
     FfmpegFailed(String),
 
     /// 本地转写引擎错误（50），原文透传。
+    #[cfg(feature = "transcribe")]
     #[error("本地转写失败：{0}")]
     Asr(String),
 
@@ -86,9 +91,13 @@ impl AppError {
             Self::BiliData(_) => 22,
             Self::NotLoggedIn => 30,
             Self::NoSubtitle { .. } => 31,
+            #[cfg(feature = "transcribe")]
             Self::ExternalMissing(_) => 40,
+            #[cfg(feature = "transcribe")]
             Self::YtDlpFailed(_) => 41,
+            #[cfg(feature = "transcribe")]
             Self::FfmpegFailed(_) => 42,
+            #[cfg(feature = "transcribe")]
             Self::Asr(_) => 50,
             Self::Storage(_) => 60,
             Self::Other(_) => 1,
@@ -108,6 +117,7 @@ impl AppError {
     }
 
     /// 下载器错误逐变体映射：yt-dlp / ffmpeg 的原始 stderr 原样透传。
+    #[cfg(feature = "transcribe")]
     pub fn from_download(e: DownloadError) -> Self {
         match e {
             DownloadError::MissingBinary(name) => Self::ExternalMissing(name),
@@ -123,7 +133,7 @@ mod tests {
 
     #[test]
     fn exit_codes_are_distinct_per_category() {
-        let cases: Vec<(AppError, i32)> = vec![
+        let mut cases: Vec<(AppError, i32)> = vec![
             (AppError::Usage("x".into()), 2),
             (AppError::BadInput("BVxx".into()), 10),
             (
@@ -137,13 +147,16 @@ mod tests {
                 AppError::NoSubtitle { bvid: "BV1".into(), title: "t".into() },
                 31,
             ),
+            (AppError::Storage("disk".into()), 60),
+            (AppError::Other("misc".into()), 1),
+        ];
+        #[cfg(feature = "transcribe")]
+        cases.extend([
             (AppError::ExternalMissing("yt-dlp"), 40),
             (AppError::YtDlpFailed("boom".into()), 41),
             (AppError::FfmpegFailed("boom".into()), 42),
             (AppError::Asr("no model".into()), 50),
-            (AppError::Storage("disk".into()), 60),
-            (AppError::Other("misc".into()), 1),
-        ];
+        ]);
         for (e, code) in cases {
             assert_eq!(e.exit_code(), code, "{e:?}");
         }
@@ -162,6 +175,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "transcribe")]
     fn from_download_keeps_stderr() {
         let e = AppError::from_download(DownloadError::YtDlp("原始 stderr 内容".into()));
         assert!(matches!(e, AppError::YtDlpFailed(ref s) if s == "原始 stderr 内容"));

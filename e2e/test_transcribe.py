@@ -16,7 +16,7 @@ pytestmark = pytest.mark.live
 @pytest.mark.skipif(not has_real_credential(), reason="需要真实登录态（先 bili2text login）")
 @pytest.mark.skipif(shutil.which("yt-dlp") is None, reason="缺 yt-dlp")
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="缺 ffmpeg")
-def test_transcribe_full_pipeline(real_cli):
+def test_transcribe_full_pipeline(real_cli, transcribe_enabled):
     r = real_cli.run(TEST_BVID, "--transcribe", timeout=600)
     assert r.returncode == 0, f"stderr: {r.stderr}"
 

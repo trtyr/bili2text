@@ -39,6 +39,11 @@ crates/
 └── asr/             # SenseVoice int8（sherpa-rs 进程内）+ silero VAD + WAV 读取
 ```
 
+发布与安装：四个 crate 均发布 crates.io，能力库包名带 `bili2text-` 前缀
+（`bili2text-downloader` / `bili2text-asr`，库名保持 `downloader` / `asr`，
+代码引用不变）。转写链路整体挂在 `transcribe` feature 后面（默认关闭，
+避免安装者被迫编译 sherpa-rs 的 C++；轻量构建下 `--transcribe` 给出安装指引）。
+
 数据流：
 
 ```text
