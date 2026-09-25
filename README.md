@@ -5,7 +5,8 @@
 <p align="center">
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1.85%2B-DEA584?logo=rust" alt="Rust"></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue" alt="platform">
-  <img src="https://img.shields.io/badge/version-0.2.0-green" alt="version">
+  <a href="https://crates.io/crates/bili2text"><img src="https://img.shields.io/crates/v/bili2text.svg" alt="crates.io"></a>
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-informational" alt="license"></a>
 </p>
 
 <p align="center">
@@ -85,7 +86,7 @@ bili2text https://www.bilibili.com/video/BV17pFLzXEEp/
 
 ```text
 bili2text <BV号|链接|短链>            提取字幕，存为 <标题>.md
-bili2text <输入> --transcribe         跳过字幕，本地转写
+bili2text <输入> --transcribe         跳过字幕，本地转写（需转写构建）
 bili2text <输入> --srt                同时导出 .srt
 bili2text <输入> -o <路径>            指定输出文档路径
 bili2text <输入> --lang <lan>         指定字幕语言（如 zh-Hans、ai-zh）
@@ -106,7 +107,7 @@ bili2text history rm <id>             删除记录
 - **AI 字幕与高音质下载需要登录**——扫码一次 10 秒解决，登录态长期留在本机
 - **单视频单 P**：多 P / 合集暂不支持，是有意先不做（需求出现再说）
 - **转写是 CPU 实时级**：约 0.7-1× 实时速度（M 系芯片），18 分钟视频约
-  20 分钟；急用请优先想办法找字幕
+  20 分钟；急用请优先想办法找字幕（且需转写构建，见上方安装）
 - 番剧、课程等非普通视频页暂不支持
 
 ## 从源码构建
@@ -128,5 +129,6 @@ cd e2e && ./.venv/bin/python -m pytest -v     # 端到端（Python；转写用�
 
 <p align="center">
   <i>看不完的视频，就变成读得完的文字。</i><br>
-  <a href="#30-秒上手">装上试试</a> · <a href="docs/design.md">设计文档</a> · <a href="https://github.com/trtyr/bili2text/issues">提 Issue</a>
+  <a href="#30-秒上手">装上试试</a> · <a href="docs/design.md">设计文档</a> · <a href="https://github.com/trtyr/bili2text/issues">提 Issue</a><br>
+  <small>以 <a href="LICENSE-MIT">MIT</a> 或 <a href="LICENSE-APACHE">Apache-2.0</a> 双许可开源</small>
 </p>
