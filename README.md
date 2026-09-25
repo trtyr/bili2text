@@ -39,20 +39,25 @@ bili2text 是一个把 B 站视频变成文字的命令行工具。看长视频�
 
 ## 30 秒上手
 
-前置：装好 [Rust 工具链](https://rustup.rs)。想用本地转写，安装时加
-`--features transcribe`（多一步 C++ 编译，需要 cmake），运行时还需要
-`yt-dlp`、`ffmpeg`——缺什么跑 `bili2text doctor --fix`，能自动补齐
-（含 SenseVoice 模型下载，约 230MB 压缩包）。
+前置：装好 [Rust 工具链](https://rustup.rs)。
 
 ```bash
-cargo install bili2text                            # 字幕提取版（纯 Rust）
-cargo install bili2text --features transcribe      # + 本地转写（需 cmake）
-bili2text login                                    # 扫码登录（AI 字幕需要）
+cargo install bili2text      # 即装即用：字幕提取（纯 Rust）
+bili2text login              # 扫码登录（AI 字幕与高音质下载需要）
 bili2text https://www.bilibili.com/video/BV17pFLzXEEp/
 ```
 
 完成后当前目录会多出一个 `<视频标题>.md`——头部是视频信息表，
 正文是全文。这就是全部流程。
+
+没字幕的视频也想转？换转写版（一条命令覆盖重装，需 cmake）：
+
+```bash
+cargo install bili2text --features transcribe
+```
+
+运行时依赖 `yt-dlp`、`ffmpeg` 与 SenseVoice 模型（约 230MB）——
+缺什么跑 `bili2text doctor --fix`，能检测并自动补齐。
 
 ## 它能做什么
 
