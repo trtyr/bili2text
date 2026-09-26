@@ -133,6 +133,7 @@ mod tests {
 
     #[test]
     fn exit_codes_are_distinct_per_category() {
+        #[cfg_attr(not(feature = "transcribe"), allow(unused_mut))]
         let mut cases: Vec<(AppError, i32)> = vec![
             (AppError::Usage("x".into()), 2),
             (AppError::BadInput("BVxx".into()), 10),

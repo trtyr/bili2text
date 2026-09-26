@@ -54,6 +54,10 @@ struct Cli {
     #[arg(short, long)]
     lang: Option<String>,
 
+    /// 指定分 P 序号（优先于 URL 中的 ?p=；缺省取 URL 的 p，都没有则 P1）
+    #[arg(short = 'P', long)]
+    page: Option<u64>,
+
     /// 跳过字幕，直接用本地 SenseVoice 模型转写（耗时较长）
     #[arg(short, long)]
     transcribe: bool,
@@ -160,8 +164,15 @@ async fn convert(
     input: &str,
     cli: &Cli,
 ) -> Result<(), AppError> {
+    // 输入统一解析一次：BV 号 + URL 中的分 P
+    let resolved = client.resolve_video(input).await.map_err(AppError::from_bili)?;
+    // 分 P 优先级：--page > URL ?p= > P1
+    let page = cli.page.or(resolved.page);
+
     log_info!(
-        "convert input={input} mode={} lang={:?} out={:?} srt={}",
+        "convert input={input} bvid={} page={:?} mode={} lang={:?} out={:?} srt={}",
+        resolved.bvid,
+        page,
         if cli.transcribe { "transcribe" } else { "subtitle" },
         cli.lang,
         cli.output,
@@ -169,9 +180,14 @@ async fn convert(
     );
 
     let doc = if cli.transcribe {
-        transcribe_flow(client, store, data_dir, input).await?
+        transcribe_flow(client, store, data_dir, &resolved.bvid, page).await?
     } else {
-        match extract::run(client, &ExtractReq { input, lang: cli.lang.as_deref() }).await {
+        match extract::run(
+            client,
+            &ExtractReq { bvid: &resolved.bvid, page, lang: cli.lang.as_deref() },
+        )
+        .await
+        {
             Ok(doc) => {
                 // 成功也落历史（尽力而为，失败不影响结果）
                 if let Err(err) = store.record(TaskRecord {
@@ -244,25 +260,27 @@ async fn transcribe_flow(
     client: &bili_client::BiliClient,
     store: &TaskStore,
     data_dir: &std::path::Path,
-    input: &str,
+    bvid: &str,
+    page: Option<u64>,
 ) -> Result<output::Doc, AppError> {
-    let bvid = client.resolve_bvid(input).await.map_err(AppError::from_bili)?;
-    let info = client.video_view(&bvid).await.map_err(AppError::from_bili)?;
+    let info = client.video_view(bvid).await.map_err(AppError::from_bili)?;
+    let sel = info.select_page(page).map_err(AppError::Usage)?;
+    let title = extract::display_title(&info, &sel);
 
     let task_id = store
         .record(TaskRecord {
             id: String::new(),
             kind: "asr_transcribe".into(),
-            input: input.into(),
-            title: Some(info.title.clone()),
-            bvid: Some(bvid.clone()),
+            input: bvid.into(),
+            title: Some(title.clone()),
+            bvid: Some(bvid.to_string()),
             status: "running".into(),
             stage: Some("downloading".into()),
             progress: Some(10),
             error: None,
             lang: None,
             lines_count: None,
-            duration_secs: Some(info.duration_secs as i64),
+            duration_secs: Some(sel.duration_secs as i64),
             result_text: None,
             result_srt: None,
             created_at: 0,
@@ -292,9 +310,11 @@ async fn transcribe_flow(
         store,
         &task_id,
         &transcribe::TranscribeReq {
-            bvid: &bvid,
-            title: &info.title,
-            duration_secs: info.duration_secs,
+            bvid,
+            title: &title,
+            // yt-dlp 按网页语义：多 P 才带 ?p=
+            page: sel.is_multi.then_some(sel.page),
+            duration_secs: sel.duration_secs,
             data_dir,
         },
     )
@@ -340,7 +360,8 @@ async fn transcribe_flow(
     _client: &bili_client::BiliClient,
     _store: &TaskStore,
     _data_dir: &std::path::Path,
-    _input: &str,
+    _bvid: &str,
+    _page: Option<u64>,
 ) -> Result<output::Doc, AppError> {
     Err(AppError::Usage(
         "当前构建不含本地转写功能（--transcribe）。\

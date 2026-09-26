@@ -56,6 +56,8 @@ impl AsrSlot {
 pub struct TranscribeReq<'a> {
     pub bvid: &'a str,
     pub title: &'a str,
+    /// 多 P 时的分 P 号（拼进下载 URL，yt-dlp 按网页语义取对应 P）。
+    pub page: Option<u64>,
     pub duration_secs: u64,
     /// 数据目录（放 cookie 导出文件与临时音频）。
     pub data_dir: &'a Path,
@@ -78,7 +80,10 @@ pub async fn run(
         .credential()
         .to_netscape_file(&req.data_dir.join("bili-cookies.txt"))
         .map_err(|e| AppError::Storage(format!("导出 cookie 失败：{e}")))?;
-    let page_url = format!("https://www.bilibili.com/video/{}", req.bvid);
+    let page_url = match req.page {
+        Some(n) => format!("https://www.bilibili.com/video/{}?p={}", req.bvid, n),
+        None => format!("https://www.bilibili.com/video/{}", req.bvid),
+    };
     let wav = downloader
         .fetch_wav(
             &page_url,

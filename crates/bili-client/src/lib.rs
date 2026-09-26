@@ -144,8 +144,13 @@ impl BiliClient {
 
     /// 从任意输入解析 BV 号：裸 BV 号、视频页链接；b23.tv 短链自动跟随重定向。
     pub async fn resolve_bvid(&self, input: &str) -> Result<String> {
+        self.resolve_video(input).await.map(|v| v.bvid)
+    }
+
+    /// 同 [`Self::resolve_bvid`]，但保留 URL 中的分 P 号（`?p=N`）。
+    pub async fn resolve_video(&self, input: &str) -> Result<ResolvedVideo> {
         if let Some(bvid) = parse_bvid(input) {
-            return Ok(bvid);
+            return Ok(ResolvedVideo { bvid, page: parse_page(input) });
         }
         if input.contains("b23.tv") {
             let url = input.trim().to_string();
@@ -157,7 +162,7 @@ impl BiliClient {
                 .await?;
             let final_url = resp.url().to_string();
             if let Some(bvid) = parse_bvid(&final_url) {
-                return Ok(bvid);
+                return Ok(ResolvedVideo { bvid, page: parse_page(&final_url) });
             }
         }
         Err(BiliError::BadInput(input.to_string()))
@@ -210,6 +215,24 @@ pub fn parse_bvid(text: &str) -> Option<String> {
     None
 }
 
+/// 解析输入 URL query 中的分 P 号（`p=N`）；裸 BV 号或无 p 参数返回 None。
+pub fn parse_page(text: &str) -> Option<u64> {
+    let query = text.split_once('?')?.1;
+    for pair in query.split(['&', '#']) {
+        if let Some(v) = pair.strip_prefix("p=") {
+            return v.trim().parse().ok().filter(|&n| n >= 1);
+        }
+    }
+    None
+}
+
+/// resolve 的完整结果：BV 号 + URL 中携带的分 P（缺省 None = 跟随 B 站默认 P1）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedVideo {
+    pub bvid: String,
+    pub page: Option<u64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +245,32 @@ mod tests {
         );
         assert_eq!(parse_bvid("BV1GJ411x7h7"), Some("BV1GJ411x7h7".into()));
         assert_eq!(parse_bvid("https://example.com/nothing"), None);
+    }
+
+    #[test]
+    fn parse_page_from_query_variants() {
+        // 带 p 的完整链接（含其他 query 参数、p 不在末尾）
+        assert_eq!(
+            parse_page(
+                "https://www.bilibili.com/video/BV1iKub6NEqt/?spm_id_from=333.788&vd_source=x&p=3"
+            ),
+            Some(3)
+        );
+        // p 在首位 / 无斜杠
+        assert_eq!(
+            parse_page("https://www.bilibili.com/video/BV1iKub6NEqt?p=12"),
+            Some(12)
+        );
+        // 不带 p / 裸 BV 号 / 非法值
+        assert_eq!(parse_page("https://www.bilibili.com/video/BV1iKub6NEqt/"), None);
+        assert_eq!(parse_page("BV1iKub6NEqt"), None);
+        assert_eq!(
+            parse_page("https://www.bilibili.com/video/BV1iKub6NEqt?p=0"),
+            None
+        );
+        assert_eq!(
+            parse_page("https://www.bilibili.com/video/BV1iKub6NEqt?p=abc"),
+            None
+        );
     }
 }

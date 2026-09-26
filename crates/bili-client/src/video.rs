@@ -15,17 +15,61 @@ const API_BASE: &str = "https://api.bilibili.com";
 pub struct VideoInfo {
     pub bvid: String,
     pub title: String,
-    /// 第一个分 P 的 cid（多 P 支持在后续任务扩展）。
+    /// 默认分 P 的 cid（= P1；多 P 时即 pages[0].cid）。
     pub cid: u64,
+    /// 全部分 P 的总时长（合集语义；单 P 即该 P 时长）。
     pub duration_secs: u64,
     pub pages: Vec<PageInfo>,
 }
 
 #[derive(Debug, Clone)]
 pub struct PageInfo {
+    /// 分 P 序号（从 1 起，与 URL `?p=N` 对应）。
+    pub page: u64,
     pub cid: u64,
     pub part: String,
     pub duration_secs: u64,
+}
+
+/// 选定的分 P（字幕 / 转写都以它为准，避免合集视频静默拿错 P）。
+#[derive(Debug, Clone)]
+pub struct SelectedPage {
+    pub page: u64,
+    pub cid: u64,
+    pub part: String,
+    pub duration_secs: u64,
+    /// 视频是否多 P（决定标题是否需要带 P 标记）。
+    pub is_multi: bool,
+}
+
+impl VideoInfo {
+    /// 选定分 P：`n = None` 跟随 B 站网页语义取 P1；带 `?p=N` 或显式指定时取对应 P。
+    /// 越界返回人读错误消息（调用方按参数问题处理）。
+    pub fn select_page(&self, n: Option<u64>) -> std::result::Result<SelectedPage, String> {
+        let n = n.unwrap_or(1);
+        let pages = if self.pages.is_empty() {
+            // 理论上 view 接口总有 pages；防御：退回默认 cid
+            return Ok(SelectedPage {
+                page: 1,
+                cid: self.cid,
+                part: String::new(),
+                duration_secs: self.duration_secs,
+                is_multi: false,
+            });
+        } else {
+            &self.pages
+        };
+        let p = pages.iter().find(|p| p.page == n).ok_or_else(|| {
+            format!("分 P 号 {n} 超出范围：该视频共 {} 个分 P（1-{}）", pages.len(), pages.len())
+        })?;
+        Ok(SelectedPage {
+            page: p.page,
+            cid: p.cid,
+            part: p.part.clone(),
+            duration_secs: p.duration_secs,
+            is_multi: pages.len() > 1,
+        })
+    }
 }
 
 /// 一条字幕轨。AI 字幕的 lan 以 "ai" 开头（如 ai-zh）。
@@ -93,6 +137,7 @@ pub async fn video_view(client: &BiliClient, bvid: &str) -> Result<VideoInfo> {
             arr.iter()
                 .filter_map(|p| {
                     Some(PageInfo {
+                        page: p.get("page")?.as_u64()?,
                         cid: p.get("cid")?.as_u64()?,
                         part: p
                             .get("part")
@@ -223,3 +268,55 @@ pub async fn subtitle_content(client: &BiliClient, url: &str) -> Result<Vec<Subt
 
 /// 供单元测试与调用方复用的 wbi 签名入口（当前未直接暴露）。
 pub(crate) fn _wbi_marker() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(pages: &[(u64, &str, u64, u64)]) -> VideoInfo {
+        VideoInfo {
+            bvid: "BV1TEST".into(),
+            title: "总标题".into(),
+            cid: pages.first().map(|p| p.2).unwrap_or(0),
+            duration_secs: pages.iter().map(|p| p.3).sum(),
+            pages: pages
+                .iter()
+                .map(|&(page, part, cid, dur)| PageInfo {
+                    page,
+                    cid,
+                    part: part.into(),
+                    duration_secs: dur,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn select_page_defaults_and_ranges() {
+        let multi = info(&[
+            (1, "第一P", 111, 60),
+            (3, "第三P", 333, 900),
+            (7, "第七P", 777, 1200),
+        ]);
+
+        // 缺省 = P1（网页语义）
+        let s = multi.select_page(None).unwrap();
+        assert_eq!((s.page, s.cid), (1, 111));
+        assert!(s.is_multi);
+
+        // 指定 P3：cid / part / 时长都以该 P 为准
+        let s = multi.select_page(Some(3)).unwrap();
+        assert_eq!((s.page, s.cid, s.part.as_str()), (3, 333, "第三P"));
+        assert_eq!(s.duration_secs, 900);
+
+        // 超范围报错
+        assert!(multi.select_page(Some(2)).is_err());
+        assert!(multi.select_page(Some(99)).is_err());
+
+        // 单 P 视频不是 multi
+        let single = info(&[(1, "唯一P", 111, 60)]);
+        let s = single.select_page(Some(1)).unwrap();
+        assert!(!s.is_multi);
+        assert_eq!(s.duration_secs, 60);
+    }
+}
