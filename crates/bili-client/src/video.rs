@@ -14,6 +14,8 @@ const API_BASE: &str = "https://api.bilibili.com";
 #[derive(Debug, Clone)]
 pub struct VideoInfo {
     pub bvid: String,
+    /// av 号（评论等以 aid 为键的接口使用）。
+    pub aid: u64,
     pub title: String,
     /// 默认分 P 的 cid（= P1；多 P 时即 pages[0].cid）。
     pub cid: u64,
@@ -156,6 +158,7 @@ pub async fn video_view(client: &BiliClient, bvid: &str) -> Result<VideoInfo> {
 
     Ok(VideoInfo {
         bvid: get_str("bvid"),
+        aid: get_u64("aid"),
         title: get_str("title"),
         cid: get_u64("cid"),
         duration_secs: get_u64("duration"),
@@ -276,6 +279,7 @@ mod tests {
     fn info(pages: &[(u64, &str, u64, u64)]) -> VideoInfo {
         VideoInfo {
             bvid: "BV1TEST".into(),
+            aid: 42,
             title: "总标题".into(),
             cid: pages.first().map(|p| p.2).unwrap_or(0),
             duration_secs: pages.iter().map(|p| p.3).sum(),

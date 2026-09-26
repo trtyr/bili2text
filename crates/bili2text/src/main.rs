@@ -7,8 +7,7 @@
 //!
 //! 退出码见 [`error::AppError`] 文档（按错误类别区分）。
 
-#[cfg(feature = "transcribe")]
-mod transcribe;
+mod comments;
 mod doctor;
 mod error;
 mod extract;
@@ -16,6 +15,8 @@ mod log;
 mod login;
 mod output;
 mod tasks;
+#[cfg(feature = "transcribe")]
+mod transcribe;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -92,6 +93,17 @@ enum Command {
         /// 记录 id
         id: Option<String>,
     },
+    /// 拉取视频热门评论，存为 <标题>.comments.md
+    Comments {
+        /// BV 号、视频页链接或 b23.tv 短链
+        input: String,
+        /// 拉取条数上限（按热度，默认 50）
+        #[arg(short, long, default_value_t = 50)]
+        num: usize,
+        /// 输出文档路径（缺省：当前目录/<标题>.comments.md）
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy)]
@@ -145,6 +157,13 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             Ok(())
         }
         Some(Command::History { action, id }) => history(&store, action, id.as_deref()),
+        Some(Command::Comments { input, num, output }) => {
+            comments::run(
+                &client,
+                &comments::CommentsReq { input: &input, limit: num, output: output.as_deref() },
+            )
+            .await
+        }
         None => {
             let input = cli.input.as_deref().ok_or_else(|| {
                 AppError::Usage(

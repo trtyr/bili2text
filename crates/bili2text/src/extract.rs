@@ -138,6 +138,7 @@ mod tests {
     fn display_title_marks_multi_page() {
         let info = VideoInfo {
             bvid: "BV1TEST".into(),
+            aid: 42,
             title: "课程合集".into(),
             cid: 111,
             duration_secs: 960,
@@ -152,6 +153,7 @@ mod tests {
         // 单 P 不加标记
         let single = VideoInfo {
             bvid: "BV1TEST".into(),
+            aid: 42,
             title: "普通视频".into(),
             cid: 111,
             duration_secs: 60,

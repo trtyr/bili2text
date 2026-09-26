@@ -10,6 +10,7 @@
 
 pub mod credential;
 pub mod qrcode;
+pub mod reply;
 pub mod video;
 pub mod wbi;
 
@@ -195,6 +196,11 @@ impl BiliClient {
     /// 下载并解析字幕内容。
     pub async fn subtitle_content(&self, url: &str) -> Result<Vec<video::SubtitleLine>> {
         video::subtitle_content(self, url).await
+    }
+
+    /// 按热度拉取视频评论（cursor 翻页至 limit）。
+    pub async fn hot_comments(&self, aid: u64, limit: usize) -> Result<reply::CommentPage> {
+        reply::hot_comments(self, aid, limit).await
     }
 }
 

@@ -83,6 +83,12 @@ cargo install bili2text --features transcribe
 - `bili2text history`：提取 / 转写历史落在本机 SQLite，`show <id>` 回看全文，
   `rm <id>` 删除（id 支持前缀）
 
+#### 评论拉取（`comments`）
+
+- `bili2text comments <链接>`：按热度拉取评论（默认 50 条，`-n` 可调），
+  存为 `<标题>.comments.md`
+- 含点赞数、日期、IP 属地与楼中楼预览，公开接口无需登录
+
 #### 脚本友好
 
 - 按错误类别区分退出码（10 输入错误 / 31 无字幕 / 41 yt-dlp 失败…），
@@ -106,6 +112,9 @@ bili2text logout                      清除登录态
 bili2text history                     历史列表
 bili2text history show <id>           回看全文（id 支持前缀）
 bili2text history rm <id>             删除记录
+
+bili2text comments <链接>             热门评论存为 <标题>.comments.md
+bili2text comments <链接> -n 100      指定拉取条数（默认 50）
 ```
 
 输入支持：裸 BV 号、视频页链接、b23.tv 短链（带查询参数也没关系）。
