@@ -8,6 +8,7 @@
 - engram project：`bili2text`（id `01a0f14f-558c-7c22-b363-18239c549e84`，type=dev）
 - codegraph：`bili2text`（cloud_index @ 7480aa7；查询前看 freshness，stale 先 sync）
 - 仓库：<https://github.com/trtyr/bili2text>
+- 远程转写服务：<http://100.64.0.5:8765>（tailnet 常驻，Qwen3-ASR 0.6B；token 在 engram credentials `transcribe-server/home-windows`，客户端配置于数据目录 `remote.json`）
 
 ## 文档清单（title → category → doc_id，一跳直达 doc_get）
 

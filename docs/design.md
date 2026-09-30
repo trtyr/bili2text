@@ -39,6 +39,15 @@ crates/
 └── asr/             # SenseVoice int8（sherpa-rs 进程内）+ silero VAD + WAV 读取
 ```
 
+转写引擎抽象（2026-09-30 起）：`transcriber.rs` 定义引擎枚举（本地 SenseVoice /
+远程 Qwen3-ASR 服务），`local.rs`（feature 门控）与 `remote.rs`（HTTP 客户端：
+提交 / 轮询 / 结果映射，契约单测锁定）各自实现；`transcribe.rs` 收敛为与引擎
+无关的下载管线。选择逻辑挂 `--asr auto|remote|local`：auto 远程优先
+（healthz 探测 + model_ready），不可达回落本地。远程配置：env
+`BILI2TEXT_REMOTE_URL/TOKEN` > 数据目录 `remote.json`。远程服务 = tailnet 内
+常驻 Qwen3-ASR 0.6B int8（Qwen3 中文 CER 7.65% 优于 SenseVoice，5800H 实测
+RTF ≈ 0.19-0.22，18min 音频约 3.4min）。
+
 发布与安装：四个 crate 均发布 crates.io，能力库包名带 `bili2text-` 前缀
 （`bili2text-downloader` / `bili2text-asr`，库名保持 `downloader` / `asr`，
 代码引用不变）。转写链路整体挂在 `transcribe` feature 后面（默认关闭，
@@ -63,6 +72,7 @@ crates/
 | 路径 | 内容 |
 | --- | --- |
 | `credential.json` | B 站登录态（SESSDATA 等 cookie 集合） |
+| `remote.json` | 远程转写服务配置（`{"url", "token"}`；env `BILI2TEXT_REMOTE_URL/TOKEN` 优先） |
 | `tasks.db` | 提取 / 转写历史（SQLite；`tool_id` 列为历史遗留，恒为 `bili2text`） |
 | `models/sherpa-onnx-sense-voice-…` | SenseVoice int8 模型（`scripts/download-model.sh` 下载） |
 | `logs/bili2text.log` | 运行日志（追加式：argv / cwd / 步骤 / 耗时 / 错误全文） |
@@ -86,7 +96,7 @@ crates/
 | 40 | `ExternalMissing` | 缺失的二进制名（yt-dlp / ffmpeg） |
 | 41 | `YtDlpFailed` | yt-dlp 进程 stderr 原样 |
 | 42 | `FfmpegFailed` | ffmpeg 进程 stderr 原样 |
-| 50 | `Asr` | AsrError 原文 |
+| 50 | `Asr` | 转写引擎错误原文（本地 SenseVoice 或远程服务） |
 | 60 | `Storage` | 本地 IO / SQLite 错误 |
 
 设计原则：**底层工具的错误逐变体 match 后原文透传**，不做二次概括——
@@ -121,6 +131,12 @@ cd e2e && ./.venv/bin/python -m pytest -v               # 全量
 - **2026-09-24** 去平台化（删 Tool trait / 工具目录），同日进一步去掉 Web 层
   （前端 + HTTP 服务），收敛为纯 CLI；错误 / 日志体系按 review 重做；
   e2e 以 Python subprocess 方案重建
+- **2026-09-26** 多 P 精确提取（`?p=` / `-P`）；comments 子命令
+- **2026-09-25** crates.io 发布就绪（feature 化转写 + 包名 + license）
+- **2026-09-30** 接入远程转写服务（Qwen3-ASR 0.6B，tailnet 常驻，经第三方
+  实测选型）：Transcriber 引擎抽象 + RemoteClient，`--asr auto` 默认远程
+  优先、不可达回落本地；轻量构建亦可远程转写（transcribe feature 仅门控
+  本地推理）
 
 ## 风险与限制（设计侧）
 

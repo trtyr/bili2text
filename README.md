@@ -69,13 +69,16 @@ cargo install bili2text --features transcribe
 - 输出 Markdown：头部信息表（来源 / 时长 / 文本来源 / 段落数）+ 全文
 - `--srt` 同时导出标准 SRT 字幕文件；`-o` 指定输出路径
 
-#### 本地转写（`--transcribe`）
+#### 转写（`--transcribe`）
 
-- 没字幕的视频也能转：yt-dlp 拉音轨 → ffmpeg 转码 → SenseVoice + VAD
-  分段推理，全程本机
-- 支持中 / 英 / 日 / 韩 / 粤
-- 需要转写构建：`cargo install bili2text --features transcribe`
-  （轻量构建下 `--transcribe` 会提示安装命令）
+- 没字幕的视频也能转：yt-dlp 拉音轨 → ffmpeg 转码 → 引擎转写
+- 双引擎自动选择（`--asr auto`，缺省）：配置了远程转写服务则优先远程
+  （快约 5 倍），不可达自动回落本地；`--asr remote` / `--asr local` 显式指定
+- 本地引擎：SenseVoice（中 / 英 / 日 / 韩 / 粤），全程本机，需转写构建：
+  `cargo install bili2text --features transcribe`
+- 远程引擎：Qwen3-ASR（22 方言 + 热词），任意构建可用。配置二选一：
+  环境变量 `BILI2TEXT_REMOTE_URL` / `BILI2TEXT_REMOTE_TOKEN`，或数据目录
+  `remote.json`（`{"url": "...", "token": "..."}`）
 
 #### 账号与历史
 
@@ -100,7 +103,8 @@ cargo install bili2text --features transcribe
 ```text
 bili2text <BV号|链接|短链>            提取字幕，存为 <标题>.md
 bili2text <输入> -P <n>               指定分 P（优先于 URL ?p=；缺省 P1）
-bili2text <输入> --transcribe         跳过字幕，本地转写（需转写构建）
+bili2text <输入> --transcribe         跳过字幕，转写（引擎自动：远程优先，回落本地）
+bili2text <输入> --asr <mode>         转写引擎：auto（默认）/ remote / local
 bili2text <输入> --srt                同时导出 .srt
 bili2text <输入> -o <路径>            指定输出文档路径
 bili2text <输入> --lang <lan>         指定字幕语言（如 zh-Hans、ai-zh）
@@ -124,8 +128,8 @@ bili2text comments <链接> -n 100      指定拉取条数（默认 50）
 - **AI 字幕与高音质下载需要登录**——扫码一次 10 秒解决，登录态长期留在本机
 - **多 P 视频按单 P 提取**：选集视频通过 `?p=` / `-P` 提取指定 P；逐 P 批量
   导出整个合集暂不支持（需求出现再说）
-- **转写是 CPU 实时级**：约 0.7-1× 实时速度（M 系芯片），18 分钟视频约
-  20 分钟；急用请优先想办法找字幕（且需转写构建，见上方安装）
+- **本地转写是 CPU 实时级**：约 0.7-1× 实时速度（M 系芯片），18 分钟视频约
+  20 分钟；配置远程转写服务后 auto 模式可提速约 5 倍；急用请优先想办法找字幕
 - 番剧、课程等非普通视频页暂不支持
 
 ## 从源码构建

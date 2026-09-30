@@ -27,6 +27,7 @@ chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 downloader = { package = "bili2text-downloader", path = "../downloader", version = "0.2.0" }
 qrencode = "0.14"
+reqwest = { version = "0.13.5", features = ["multipart", "json"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

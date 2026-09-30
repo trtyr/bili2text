@@ -11,25 +11,37 @@ mod comments;
 mod doctor;
 mod error;
 mod extract;
+#[cfg(feature = "transcribe")]
+mod local;
 mod log;
 mod login;
 mod output;
+mod remote;
 mod tasks;
-#[cfg(feature = "transcribe")]
 mod transcribe;
+mod transcriber;
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
-#[cfg(feature = "transcribe")]
-use downloader::AudioDownloader;
 
 use crate::error::AppError;
 use crate::extract::ExtractReq;
 use crate::tasks::{TaskRecord, TaskStore};
-#[cfg(feature = "transcribe")]
-use crate::transcribe::AsrSlot;
+use crate::transcriber::{Engine, RemoteTranscriber};
+
+/// 转写引擎选择模式。
+#[derive(ValueEnum, Clone, Copy, Default, PartialEq, Eq)]
+enum AsrMode {
+    /// 远程优先：已配置且可达 → 远程；否则回落本地（缺省）。
+    #[default]
+    Auto,
+    /// 仅远程：未配置或不可达直接报错，不回落。
+    Remote,
+    /// 仅本地 SenseVoice。
+    Local,
+}
 
 /// `--version` 输出：带功能标记，供脚本 / e2e 探测当前构建的能力。
 const VERSION_TEXT: &str = if cfg!(feature = "transcribe") {
@@ -59,9 +71,13 @@ struct Cli {
     #[arg(short = 'P', long)]
     page: Option<u64>,
 
-    /// 跳过字幕，直接用本地 SenseVoice 模型转写（耗时较长）
+    /// 跳过字幕，直接转写（默认自动选引擎：远程优先，回落本地）
     #[arg(short, long)]
     transcribe: bool,
+
+    /// 转写引擎选择（配合 --transcribe）
+    #[arg(long, value_enum, default_value_t = AsrMode::Auto)]
+    asr: AsrMode,
 
     /// 同时导出 .srt 字幕文件（与文档同目录同名）
     #[arg(long)]
@@ -199,7 +215,7 @@ async fn convert(
     );
 
     let doc = if cli.transcribe {
-        transcribe_flow(client, store, data_dir, &resolved.bvid, page).await?
+        transcribe_flow(client, store, data_dir, &resolved.bvid, page, cli.asr).await?
     } else {
         match extract::run(
             client,
@@ -273,14 +289,14 @@ async fn convert(
     Ok(())
 }
 
-/// 本地转写流程：先落 running 历史，完成后回写终态。
-#[cfg(feature = "transcribe")]
+/// 转写流程：落 running 历史 → 选引擎（本地/远程）→ 管线 → 终态回写。
 async fn transcribe_flow(
     client: &bili_client::BiliClient,
     store: &TaskStore,
     data_dir: &std::path::Path,
     bvid: &str,
     page: Option<u64>,
+    mode: AsrMode,
 ) -> Result<output::Doc, AppError> {
     let info = client.video_view(bvid).await.map_err(AppError::from_bili)?;
     let sel = info.select_page(page).map_err(AppError::Usage)?;
@@ -307,28 +323,13 @@ async fn transcribe_flow(
         })
         .map_err(|e| AppError::Storage(e.to_string()))?;
 
-    let downloader = AudioDownloader::new(data_dir.join("audio"));
-    // 模型缺失提前给出可行动的错误（而非推理时的底层报错）
-    if !data_dir
-        .join("models")
-        .join(transcribe::MODEL_SUBDIR)
-        .join("model.int8.onnx")
-        .exists()
-    {
-        return Err(AppError::ExternalMissing(
-            "SenseVoice 模型",
-        ));
-    }
-    let asr_slot = std::sync::Arc::new(AsrSlot::with_model_dir(
-        data_dir.join("models").join(transcribe::MODEL_SUBDIR),
-    ));
+    let engine = select_engine(data_dir, mode).await?;
     let result = transcribe::run(
         client,
-        &downloader,
-        &asr_slot,
+        &engine,
         store,
         &task_id,
-        &transcribe::TranscribeReq {
+        &transcribe::PipelineReq {
             bvid,
             title: &title,
             // yt-dlp 按网页语义：多 P 才带 ?p=
@@ -373,20 +374,56 @@ async fn transcribe_flow(
     }
 }
 
-/// 轻量构建（不含 transcribe feature）下的占位：给出带安装指引的明确错误。
+/// 本地引擎构造（feature 与模型检查，不可用时给出可行动错误）。
+#[cfg(feature = "transcribe")]
+fn local_engine(data_dir: &std::path::Path) -> Result<Engine, AppError> {
+    if !local::model_present(data_dir) {
+        return Err(AppError::ExternalMissing("SenseVoice 模型"));
+    }
+    Ok(Engine::Local(local::LocalTranscriber::new(
+        data_dir.join("models").join(local::MODEL_SUBDIR),
+    )))
+}
+
 #[cfg(not(feature = "transcribe"))]
-async fn transcribe_flow(
-    _client: &bili_client::BiliClient,
-    _store: &TaskStore,
-    _data_dir: &std::path::Path,
-    _bvid: &str,
-    _page: Option<u64>,
-) -> Result<output::Doc, AppError> {
+fn local_engine(_data_dir: &std::path::Path) -> Result<Engine, AppError> {
     Err(AppError::Usage(
-        "当前构建不含本地转写功能（--transcribe）。\
-         转写版安装：cargo install bili2text --features transcribe（需 cmake）"
+        "当前构建不含本地转写。转写版安装：cargo install bili2text --features transcribe（需 cmake）；\
+         或配置远程转写服务后用 --asr remote"
             .into(),
     ))
+}
+
+/// 引擎选择：auto = 远程优先（已配置且可达且模型就绪），否则回落本地。
+async fn select_engine(data_dir: &std::path::Path, mode: AsrMode) -> Result<Engine, AppError> {
+    match mode {
+        AsrMode::Local => local_engine(data_dir),
+        AsrMode::Remote => {
+            let cfg = remote::load_config(data_dir).ok_or_else(|| {
+                AppError::Usage(
+                    "远程转写未配置。设置环境变量 BILI2TEXT_REMOTE_URL / BILI2TEXT_REMOTE_TOKEN，\
+                     或在数据目录写 remote.json"
+                        .into(),
+                )
+            })?;
+            let rt = RemoteTranscriber::new(cfg);
+            rt.healthz().await.map_err(|_| {
+                AppError::Usage("远程服务不可达（--asr remote 为显式模式，不回落本地）".into())
+            })?;
+            Ok(Engine::Remote(rt))
+        }
+        AsrMode::Auto => {
+            if let Some(cfg) = remote::load_config(data_dir) {
+                let rt = RemoteTranscriber::new(cfg);
+                match rt.healthz().await {
+                    Ok(h) if h.model_ready => return Ok(Engine::Remote(rt)),
+                    Ok(_) => log_step!("远程服务模型未就绪，回落本地…"),
+                    Err(_) => log_step!("远程服务不可达，回落本地…"),
+                }
+            }
+            local_engine(data_dir)
+        }
+    }
 }
 
 /// 历史记录子命令。
@@ -496,4 +533,33 @@ fn data_dir() -> Result<PathBuf, AppError> {
     let home = std::env::var("HOME")
         .map_err(|_| AppError::Storage("无法确定 HOME 目录".into()))?;
     Ok(PathBuf::from(home).join(".local/share/bili2text"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn select_engine_remote_without_config_is_usage() {
+        // 未配置远程时，显式 remote 模式给出可行动的 Usage 错误
+        let Err(err) = select_engine(std::path::Path::new("/nonexistent-b2t-test"), AsrMode::Remote).await
+        else {
+            panic!("should fail without config");
+        };
+        assert!(matches!(err, AppError::Usage(_)), "{err}");
+    }
+
+    #[tokio::test]
+    async fn select_engine_auto_without_config_falls_to_local() {
+        // 未配置远程时，auto 直接走本地分支：
+        // 转写构建 → 无模型目录报 ExternalMissing；轻量构建 → Usage 带安装指引
+        let Err(err) = select_engine(std::path::Path::new("/nonexistent-b2t-test"), AsrMode::Auto).await
+        else {
+            panic!("should fail without local engine");
+        };
+        #[cfg(feature = "transcribe")]
+        assert!(matches!(err, AppError::ExternalMissing(_)), "{err}");
+        #[cfg(not(feature = "transcribe"))]
+        assert!(matches!(err, AppError::Usage(_)), "{err}");
+    }
 }

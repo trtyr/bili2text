@@ -3,3 +3,4 @@
 .rumdl_cache/
 
 # 运行时数据（登录态 / 历史库 / ASR 模型）已迁至 ~/.local/share/bili2text/
+.pi/

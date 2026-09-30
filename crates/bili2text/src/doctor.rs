@@ -9,7 +9,7 @@ use bili_client::BiliClient;
 
 use crate::error::AppError;
 #[cfg(feature = "transcribe")]
-use crate::transcribe::MODEL_SUBDIR;
+use crate::local::MODEL_SUBDIR;
 
 #[cfg(feature = "transcribe")]
 const MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17.tar.bz2";
